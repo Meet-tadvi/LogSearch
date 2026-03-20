@@ -1,0 +1,23 @@
+{
+  "pis_railway": {
+    "description": "Railway PIS system logs",
+    "pattern": "(?P<timestamp>\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}:\\d{3})\\s*\\|(?P<component>[^:]+?)\\s*:\\s*(?P<file_path>[^:]+?):(?P<line_number>\\d+):\\(\\):(?P<level>\\w+):(?P<thread_id>\\d+):(?P<message>.+)",
+    "fields": ["timestamp", "component", "file_path", "line_number", "level", "thread_id", "message"],
+    "level_map": {},
+    "timestamp_format": "%Y-%m-%dT%H:%M:%S:%f",
+    "example": "2025-04-17T08:35:19:981 |XRAIL :  nvramserialiser.cpp:15:():INFO:1:Found NvRam."
+  },
+  "wdog_system": {
+    "description": "WDOG watchdog system logs",
+    "pattern": "(?P<timestamp>\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}\\.\\d{3})\\s+(?P<thread_id>[0-9a-fA-F]{8})\\s+(?P<component>\\S+)\\s+(?P<level>\\w{3})\\s+(?P<priority>p\\d+)\\s+(?P<file_path>[\\w.]+):(?P<line_number>\\d+)\\s+(?P<message>.+)",
+    "fields": ["timestamp", "thread_id", "component", "level", "priority", "file_path", "line_number", "message"],
+    "level_map": {
+      "Inf": "INFO",
+      "Err": "ERROR",
+      "Wrn": "WARNING",
+      "Dbg": "DEBUG"
+    },
+    "timestamp_format": "%d-%m %H:%M:%S.%f",
+    "example": "04-02 02:55:24.115 b72d6000  WDOG Inf p0 wdg_SystemAvai:0399 System available"
+  }
+}

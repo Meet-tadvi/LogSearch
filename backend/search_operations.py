@@ -290,6 +290,7 @@ class SearchOperations:
                       thread_id:      Optional[str]       = None,
                       thread_ids:     Optional[List[str]] = None,
                       source_file:    Optional[str]       = None,
+                      uploaded_file:  Optional[str]       = None,
                       source_line:    Optional[int]       = None,
                       extra_field:    Optional[str]       = None,
                       extra_value:    Optional[str]       = None,
@@ -381,6 +382,11 @@ class SearchOperations:
             if threads_filter and has_thread:
                 if not log.thread_id or \
                    not any(t in log.thread_id.lower() for t in threads_filter):
+                    continue
+
+            # ── uploaded file (log.source_file = original filename) ──
+            if uploaded_file:
+                if uploaded_file.lower() not in log.source_file.lower():
                     continue
 
             # ── source file ───────────────────────────────────────
@@ -525,6 +531,7 @@ class SearchOperations:
         return {
             'actual_line_number': log.actual_line_number,
             'timestamp':          log.timestamp,
+            'timestamp_dt':       log.timestamp_dt,
             'component':          log.component,
             'file_path':          log.file_path,
             'line_number':        log.line_number,
@@ -534,4 +541,5 @@ class SearchOperations:
             'raw_line':           log.raw_line,
             'extra_fields':       log.extra_fields,
             'format_name':        log.format_name,
+            'source_file':        log.source_file,
         }
