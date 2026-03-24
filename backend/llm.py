@@ -221,7 +221,9 @@ async def stream_ollama_response(
             stream   = True,
             options  = {
                 'temperature': 0.1,
-                'num_ctx':     131072,   # request 128k context window
+                'num_ctx':     32768,    # 32k context — fits in 6GB VRAM
+                'num_gpu':     99,       # offload ALL layers to GPU (RTX 4050)
+                'num_thread':  8,
             }
         )
         for chunk in stream:
