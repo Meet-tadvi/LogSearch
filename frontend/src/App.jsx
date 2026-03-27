@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Sidebar     from './components/Sidebar.jsx'
+import FilesTab    from './components/FilesTab.jsx'
 import ResultsTab  from './components/ResultsTab.jsx'
 import SummaryTab  from './components/SummaryTab.jsx'
 import TimelineTab from './components/TimelineTab.jsx'
@@ -29,7 +30,7 @@ export default function App() {
   const [results,     setResults]     = useState(null)
   const [loading,     setLoading]     = useState(false)
   const [summary,     setSummary]     = useState(null)
-  const [activeTab,   setActiveTab]   = useState('results')
+  const [activeTab,   setActiveTab]   = useState('files')
   const [error,       setError]       = useState(null)
   // Fix 5: LLM history lives in App so it survives tab switches
   const [llmHistory,  setLlmHistory]  = useState([])
@@ -183,10 +184,6 @@ export default function App() {
         pending         = {pending}
         uploading       = {uploading}
         onUpload        = {handleUpload}
-        onToggleFile    = {handleToggleFile}
-        onSelectAll     = {handleSelectAll}
-        onDeselectAll   = {handleDeselectAll}
-        onDeleteFile    = {handleDeleteFile}
         onPendingChange = {(key, val) => setPending(p => ({ ...p, [key]: val }))}
         onApply         = {handleApply}
         onClear         = {handleClear}
@@ -224,6 +221,7 @@ export default function App() {
         {/* Tab bar */}
         <div className="tab-bar px-4">
           {[
+            { id: 'files',    label: '📁 Files'    },
             { id: 'results',  label: '📊 Results'  },
             { id: 'summary',  label: '📋 Summary'  },
             { id: 'timeline', label: '📈 Timeline' },
@@ -235,12 +233,26 @@ export default function App() {
               onClick   = {() => setActiveTab(t.id)}
             >
               {t.label}
+              {t.id === 'files' && files.length > 0 && (
+                <span className="ml-1 text-muted" style={{ fontSize: 10 }}>({files.length})</span>
+              )}
             </button>
           ))}
         </div>
 
         {/* Tab content */}
         <div className="flex-1 overflow-auto p-4">
+          {activeTab === 'files' && (
+            <FilesTab
+              files         = {files}
+              selectedIds   = {selectedIds}
+              onToggleFile  = {handleToggleFile}
+              onSelectAll   = {handleSelectAll}
+              onDeselectAll = {handleDeselectAll}
+              onDeleteFile  = {handleDeleteFile}
+            />
+          )}
+
           {activeTab === 'results' && (
             <ResultsTab
               results          = {results}

@@ -65,63 +65,13 @@ function MultiSelect({ label, options, selected, onChange }) {
   )
 }
 
-// ── FileCard ──────────────────────────────────────────────────
-function FileCard({ file, checked, onToggle, onDelete }) {
-  const rateColor = file.parse_rate < 80
-    ? '#f85149'
-    : file.parse_rate < 95
-    ? '#d29922'
-    : '#3fb950'
-
-  return (
-    <div
-      className = "card mb-2 cursor-pointer"
-      style     = {{ borderLeft: `3px solid ${checked ? '#f0a500' : '#30363d'}` }}
-      onClick   = {onToggle}
-    >
-      <div className="flex items-start gap-2">
-        <input
-          type     = "checkbox"
-          checked  = {checked}
-          onChange = {onToggle}
-          onClick  = {e => e.stopPropagation()}
-          className= "mt-0.5 accent-accent flex-shrink-0"
-        />
-        <div className="flex-1 min-w-0">
-          <div
-            className = "font-mono font-bold text-xs truncate"
-            title     = {file.filename}
-            style     = {{ color: checked ? '#f0a500' : '#e6edf3' }}
-          >
-            {file.filename}
-          </div>
-          <div className="text-muted text-xs mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
-            {file.format && <span className="text-info">{file.format}</span>}
-            <span>{(file.entry_count || 0).toLocaleString()} entries</span>
-            <span style={{ color: rateColor }}>{file.parse_rate?.toFixed(1)}%</span>
-            {file.unparsed_count > 0 && (
-              <span className="text-warn">⚠ {file.unparsed_count.toLocaleString()} unparsed</span>
-            )}
-          </div>
-        </div>
-        <button
-          className = "btn btn-danger text-xs px-1.5 py-0.5 flex-shrink-0"
-          onClick   = {e => { e.stopPropagation(); onDelete(file.file_id) }}
-          title     = "Remove file"
-        >
-          ✕
-        </button>
-      </div>
-    </div>
-  )
-}
 
 // ── Main Sidebar ──────────────────────────────────────────────
 export default function Sidebar({
-  files, selectedIds, metadata, pending,
+  files, selectedIds,
   uploading,
-  onUpload, onToggleFile, onSelectAll, onDeselectAll,
-  onDeleteFile, onPendingChange, onApply, onClear,
+  onUpload, onPendingChange, onApply, onClear,
+  pending, metadata,
 }) {
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef(null)
@@ -145,11 +95,16 @@ export default function Sidebar({
   return (
     <div
       className = "flex flex-col border-r border-border overflow-y-auto"
-      style     = {{ width: 260, minWidth: 260, background: '#0d1117' }}
+      style     = {{ width: 240, minWidth: 240, background: '#0d1117' }}
     >
       {/* ── Title ── */}
       <div className="px-4 py-3 border-b border-border">
         <span className="font-mono font-bold text-accent text-sm">// log_search</span>
+        {files.length > 0 && (
+          <span className="text-muted text-xs ml-2">
+            {selectedIds.length}/{files.length} files
+          </span>
+        )}
       </div>
 
       {/* ── Upload zone ── */}
@@ -184,28 +139,6 @@ export default function Sidebar({
           className= "hidden"
         />
       </div>
-
-      {/* ── File list ── */}
-      {files.length > 0 && (
-        <div className="px-3 pt-3">
-          <div className="flex items-center justify-between mb-2">
-            <span className="inp-label">FILES ({files.length})</span>
-            <div className="flex gap-1">
-              <button className="btn text-xs px-2 py-0.5" onClick={onSelectAll}>All</button>
-              <button className="btn text-xs px-2 py-0.5" onClick={onDeselectAll}>None</button>
-            </div>
-          </div>
-          {files.map(f => (
-            <FileCard
-              key      = {f.file_id}
-              file     = {f}
-              checked  = {selectedIds.includes(f.file_id)}
-              onToggle = {() => onToggleFile(f.file_id)}
-              onDelete = {onDeleteFile}
-            />
-          ))}
-        </div>
-      )}
 
       {/* ── Divider ── */}
       <div className="border-t border-border mx-3 mt-3" />

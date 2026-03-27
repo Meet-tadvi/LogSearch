@@ -94,19 +94,23 @@ export default function LLMPanel({
   }
 
   async function handleLoadPreview() {
+    setPreviewCsv('Loading…')
     try {
-      const data    = await api.search({
-        file_ids:  selectedIds.length ? selectedIds : null,
-        text:      appliedFilters.text || null,
-        levels:    appliedFilters.levels.length ? appliedFilters.levels : null,
-        page:      0,
-        page_size: 50,
+      const data = await api.getCsvPreview({
+        file_ids: selectedIds.length ? selectedIds : null,
+        filters: {
+          text:        appliedFilters.text        || null,
+          levels:      appliedFilters.levels.length      ? appliedFilters.levels      : null,
+          components:  appliedFilters.components.length  ? appliedFilters.components  : null,
+          threads:     appliedFilters.threads.length     ? appliedFilters.threads     : null,
+          file_filter: appliedFilters.file_filter || null,
+          time_start:  appliedFilters.time_start  || null,
+          time_end:    appliedFilters.time_end    || null,
+          line_start:  appliedFilters.line_start  ? parseInt(appliedFilters.line_start) : null,
+          line_end:    appliedFilters.line_end    ? parseInt(appliedFilters.line_end)   : null,
+        },
       })
-      const matches = data.matches || []
-      if (!matches.length) { setPreviewCsv('No data.'); return }
-      const headers = Object.keys(matches[0]).filter(k => k !== 'raw_line' && k !== 'extra_fields')
-      const rows    = matches.map(m => headers.map(h => String(m[h] ?? '')).join(','))
-      setPreviewCsv([headers.join(','), ...rows].join('\n'))
+      setPreviewCsv(data.csv || 'No data.')
     } catch (e) {
       setPreviewCsv(`Error: ${e.message}`)
     }

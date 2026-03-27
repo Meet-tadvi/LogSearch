@@ -150,6 +150,11 @@ class LLMRequest(BaseModel):
     history:  Optional[List[dict]]   = None
 
 
+class CsvPreviewRequest(BaseModel):
+    file_ids: Optional[List[str]]    = None
+    filters:  Optional[SearchRequest] = None
+
+
 class AddFormatRequest(BaseModel):
     name:             str
     description:      str
@@ -515,6 +520,24 @@ async def llm_chat(req: LLMRequest, session = Depends(get_session)):
             'X-Accel-Buffering': 'no',   # disable nginx buffering
         },
     )
+
+
+@app.post('/api/llm/csv-preview')
+async def llm_csv_preview(req: CsvPreviewRequest, session = Depends(get_session)):
+    """
+    Return the first 50 rows of the EXACT CSV that would be sent to Ollama.
+    Used by the LLM panel 'Preview data' button so users see the real payload.
+    """
+    filters = req.filters or SearchRequest()
+    ids     = req.file_ids or None
+    ops     = store.get_combined_ops(session, ids)
+
+    if not ops:
+        return {'csv': '', 'total': 0}
+
+    all_matches = _apply_filters(ops, filters)
+    preview     = build_csv_from_matches(all_matches[:50], list(ops.available_fields))
+    return {'csv': preview, 'total': len(all_matches)}
 
 
 @app.get('/api/llm/context-info')

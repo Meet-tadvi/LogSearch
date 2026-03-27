@@ -191,6 +191,14 @@ export async function getContextInfo(fileIds) {
 }
 
 /**
+ * Get the first 50 rows of the exact CSV that would be sent to Ollama.
+ * Returns { csv: string, total: number }
+ */
+export async function getCsvPreview(params) {
+  return post('/api/llm/csv-preview', params)
+}
+
+/**
  * Stream an LLM chat response via Server-Sent Events.
  *
  * Reads the SSE stream from POST /api/llm/chat using fetch + ReadableStream.

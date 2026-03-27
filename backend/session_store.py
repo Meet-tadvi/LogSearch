@@ -106,6 +106,7 @@ def _save_session_json(session: SessionData):
                 'available_fields':     f.available_fields,
                 'entries_path':         f.entries_path,
                 'unparsed_path':        f.unparsed_path,
+                'time_range':           f.time_range,
             }
             for fid, f in session.files.items()
         }
@@ -410,6 +411,7 @@ def restore_sessions():
                     search_ops           = search_ops,
                     entries_path         = entries_path,
                     unparsed_path        = info.get('unparsed_path', ''),
+                    time_range           = info.get('time_range', {'start': None, 'end': None}),
                 )
 
             restored += 1
