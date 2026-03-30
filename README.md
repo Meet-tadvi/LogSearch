@@ -21,12 +21,11 @@ complete data privacy.
 -   **AI Assistant** powered by local LLM (Ollama)
 -   Summary statistics, level distribution, and timeline view
 -   Export filtered results and unparsed lines as CSV
--   Session persistence using SQLite
 -   Completely private and offline
 
 ## 🛠 Tech Stack
 
--   Backend: Python, FastAPI, Uvicorn, SQLite
+-   Backend: Python, FastAPI, Uvicorn, (mongodb addition in future)
 -   Frontend: React, Vite, Tailwind CSS
 -   AI: Ollama (local LLM)
 
@@ -61,18 +60,20 @@ Open: http://localhost:5173
 ## ⚙️ LLM Setup
 
 ``` bash
+first install ollama.exe form official ollama website
 ollama pull llama3.1:8b
 ```
 
 ## 📊 Limitations
 
 -   Works best under 200MB per file
--   Needs good RAM for huge logs
+-   Needs good RAM for huge logs file and more number of logs files
+-   if you want good and accurate answers from llm, then use more parameter llm which required more powerfull gpu 
 
 ## 🛣️ Future Plans
 
--   DuckDB/PostgreSQL support
--   Semantic search
+-   mongodb support
+-   chatbot type user interface
 -   Docker setup
 
 ------------------------------------------------------------------------
