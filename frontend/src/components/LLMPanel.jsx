@@ -150,7 +150,7 @@ export default function LLMPanel({
   }
 
   return (
-    <div className="flex flex-col h-full max-w-3xl gap-3">
+    <div className="flex flex-col h-full w-full gap-3">
 
       {/* Context info bar */}
       <div className="card card-accent flex flex-wrap items-center gap-3">

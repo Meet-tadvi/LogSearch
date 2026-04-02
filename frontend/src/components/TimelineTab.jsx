@@ -72,7 +72,7 @@ export default function TimelineTab({ files, selectedIds }) {
   }
 
   return (
-    <div className="flex flex-col gap-5 max-w-3xl">
+    <div className="flex flex-col gap-5 w-full">
 
       <div className="card card-accent">
         <div className="font-mono font-bold text-xs text-accent mb-1">Timeline</div>

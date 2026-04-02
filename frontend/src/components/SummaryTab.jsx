@@ -65,7 +65,7 @@ export default function SummaryTab({ summary, loading }) {
   const lvl = levels.distribution || levels
 
   return (
-    <div className="flex flex-col gap-5 max-w-4xl">
+    <div className="flex flex-col gap-5 w-full">
 
       {/* ── Stat cards ── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

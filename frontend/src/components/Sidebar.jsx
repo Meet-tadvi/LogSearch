@@ -71,7 +71,7 @@ export default function Sidebar({
   files, selectedIds,
   uploading,
   onUpload, onPendingChange, onApply, onClear,
-  pending, metadata,
+  pending, metadata, isOpen, onToggle
 }) {
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef(null)
@@ -94,19 +94,46 @@ export default function Sidebar({
 
   return (
     <div
-      className = "flex flex-col border-r border-border overflow-y-auto"
-      style     = {{ width: 240, minWidth: 240, background: '#0d1117' }}
+      className="flex-shrink-0 border-r border-border"
+      style={{
+        width: isOpen ? 240 : 45,
+        transition: 'width 0.2s ease-in-out',
+        background: '#161b22',
+        overflow: 'hidden'
+      }}
     >
+      <div
+        className="flex flex-col h-full overflow-y-auto"
+        style={{ width: 240 }}
+      >
       {/* ── Title ── */}
-      <div className="px-4 py-3 border-b border-border">
-        <span className="font-mono font-bold text-accent text-sm">// log_search</span>
-        {files.length > 0 && (
-          <span className="text-muted text-xs ml-2">
-            {selectedIds.length}/{files.length} files
-          </span>
-        )}
+      <div className="px-3 py-[10px] border-b border-border flex items-center overflow-hidden">
+        <button
+          className="text-muted hover:text-text cursor-pointer flex-shrink-0 flex items-center justify-center"
+          onClick={onToggle}
+          title="Toggle Sidebar"
+          style={{ width: 24, fontSize: '18px', border: 'none', background: 'transparent' }}
+        >
+          ☰
+        </button>
+        <div className="ml-3 flex items-center whitespace-nowrap overflow-hidden">
+          <span className="font-mono font-bold text-accent text-sm"> Log Vision</span>
+          {files.length > 0 && (
+            <span className="text-muted text-xs ml-2">
+              {selectedIds.length}/{files.length} files
+            </span>
+          )}
+        </div>
       </div>
 
+      <div 
+        className="flex flex-col flex-1 pb-4"
+        style={{ 
+          opacity: isOpen ? 1 : 0, 
+          transition: 'opacity 0.2s', 
+          visibility: isOpen ? 'visible' : 'hidden' 
+        }}
+      >
       {/* ── Upload zone ── */}
       <div className="px-3 pt-3">
         <div
@@ -262,6 +289,8 @@ export default function Sidebar({
           </button>
         </div>
       </div>
+      </div>
+    </div>
     </div>
   )
 }

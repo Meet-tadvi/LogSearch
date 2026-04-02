@@ -34,6 +34,7 @@ export default function App() {
   const [error,       setError]       = useState(null)
   // Fix 5: LLM history lives in App so it survives tab switches
   const [llmHistory,  setLlmHistory]  = useState([])
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true)
 
   const selectedFiles   = files.filter(f => selectedIds.includes(f.file_id))
   const isMultiFile     = selectedFiles.length > 1
@@ -178,6 +179,8 @@ export default function App() {
     <div className="flex h-screen overflow-hidden bg-bg">
 
       <Sidebar
+        isOpen          = {isSidebarOpen}
+        onToggle        = {() => setIsSidebarOpen(o => !o)}
         files           = {files}
         selectedIds     = {selectedIds}
         metadata        = {metadata}
@@ -193,7 +196,7 @@ export default function App() {
 
         {/* Header bar */}
         <div className="card card-accent rounded-none border-x-0 border-t-0 px-5 py-3 flex items-center gap-4 flex-wrap">
-          <span className="font-mono font-bold text-accent text-base">// log_search</span>
+          <span className="font-mono font-bold text-accent text-base"> Log Vision </span>
           <span className="text-muted text-xs">
             {selectedFiles.length > 0 ? (
               <>
