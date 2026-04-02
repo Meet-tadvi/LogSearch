@@ -19,5 +19,21 @@
     },
     "timestamp_format": "%d-%m %H:%M:%S.%f",
     "example": "04-02 02:55:24.115 b72d6000  WDOG Inf p0 wdg_SystemAvai:0399 System available"
+  },
+  "streaming_server": {
+    "description": "Streaming Server Logs",
+    "pattern": "^\\\"(?P<timestamp>\\d{8}:\\d{6}\\.\\d{3})\\\"\\s*(?::\\s*)?(?:(?P<level>[A-Z]+)\\s*:)?\\s*(?P<message>.*)",
+    "fields": ["timestamp", "level", "message"],
+    "level_map": {},
+    "timestamp_format": "%d%m%Y:%H%M%S.%f",
+    "example": "\"24042025:152627.824\"  :INFO: Ready to Listen Incoming Message..."
+  },
+  "ccuc_video_playback": {
+    "description": "CCUC Video Playback Logs",
+    "pattern": "^(?P<file_name>[^,]+),(?P<timestamp>[A-Za-z]{3}\\s+[A-Za-z]{3}\\s+\\d{1,2}\\s+\\d{4},\\d{2}:\\d{2}:\\d{2}),(?P<duration>[^,]+),(?P<trip_code>[^,]+),(?P<origin_id>[^,]+),(?P<destination_id>[^,\\r\\n]+)",
+    "fields": ["file_name", "timestamp", "duration", "trip_code", "origin_id", "destination_id"],
+    "level_map": {},
+    "timestamp_format": "%a %b %d %Y,%H:%M:%S",
+    "example": "WMT_Test.h264,Tue Apr 22 2025,20:05:38,00:09.973,4A01,5451825,5452087"
   }
 }

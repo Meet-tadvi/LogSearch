@@ -52,7 +52,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -471,7 +471,7 @@ async def export_unparsed(
 # ================================================================
 
 @app.post('/api/llm/chat')
-async def llm_chat(req: LLMRequest, session = Depends(get_session)):
+async def llm_chat(req: LLMRequest, request: Request, session = Depends(get_session)):
     """
     Send a natural language question about the filtered log data.
     Returns a Server-Sent Events stream of tokens.
@@ -483,6 +483,11 @@ async def llm_chat(req: LLMRequest, session = Depends(get_session)):
 
     The full filtered dataset (as CSV) is sent to Ollama with every
     request — no sampling, no truncation.
+
+    request.is_disconnected() is polled between each yielded chunk so
+    that when the user clicks Stop (AbortController on the frontend),
+    the backend stops sending immediately and avoids the
+    'socket.send() raised exception' log spam.
     """
     filters = req.filters or SearchRequest()
     ids     = req.file_ids or None
@@ -512,8 +517,15 @@ async def llm_chat(req: LLMRequest, session = Depends(get_session)):
     csv_data = build_csv_from_matches(all_matches, list(ops.available_fields))
     history  = req.history or []
 
+    async def _stream_with_disconnect_check():
+        """Thin wrapper: stop yielding the moment the client disconnects."""
+        async for chunk in stream_ollama_response(req.question, csv_data, summary, history):
+            if await request.is_disconnected():
+                break          # client gone — stop sending, no more socket errors
+            yield chunk
+
     return StreamingResponse(
-        stream_ollama_response(req.question, csv_data, summary, history),
+        _stream_with_disconnect_check(),
         media_type = 'text/event-stream',
         headers    = {
             'Cache-Control':    'no-cache',

@@ -46,7 +46,8 @@ export default function LLMPanel({
   const [question,    setQuestion]    = useState('')
   const [showPreview, setShowPreview] = useState(false)
   const [previewCsv,  setPreviewCsv]  = useState('')
-  const bottomRef = useRef(null)
+  const bottomRef          = useRef(null)
+  const abortControllerRef = useRef(null)  // holds the AbortController for the active request
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -68,6 +69,10 @@ export default function LLMPanel({
     setStreaming(true)
     setStreamBuf('')
 
+    // Fresh AbortController for this request
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     let fullResponse = ''
 
     await api.streamLLMChat(
@@ -88,9 +93,33 @@ export default function LLMPanel({
         history: newHistory.slice(0, -1),
       },
       (token) => { fullResponse += token; setStreamBuf(fullResponse) },
-      ()      => { onHistoryChange([...newHistory, { role: 'assistant', content: fullResponse }]); setStreamBuf(''); setStreaming(false) },
-      (err)   => { onHistoryChange([...newHistory, { role: 'assistant', content: `${err}` }]); setStreamBuf(''); setStreaming(false) },
+      () => {
+        // Natural completion
+        abortControllerRef.current = null
+        onHistoryChange([...newHistory, { role: 'assistant', content: fullResponse }])
+        setStreamBuf(''); setStreaming(false)
+      },
+      (err) => {
+        // Error from Ollama / network
+        abortControllerRef.current = null
+        onHistoryChange([...newHistory, { role: 'assistant', content: `⚠️ ${err}` }])
+        setStreamBuf(''); setStreaming(false)
+      },
+      controller.signal,   // AbortSignal ← passed to fetch()
+      () => {
+        // User clicked Stop — save whatever arrived so far
+        abortControllerRef.current = null
+        const saved = fullResponse
+          ? fullResponse + '\n\n⏹️ _Stopped by user._'
+          : '⏹️ _Stopped before any output._'
+        onHistoryChange([...newHistory, { role: 'assistant', content: saved }])
+        setStreamBuf(''); setStreaming(false)
+      },
     )
+  }
+
+  function handleStop() {
+    abortControllerRef.current?.abort()
   }
 
   async function handleLoadPreview() {
@@ -215,13 +244,34 @@ export default function LLMPanel({
           onKeyDown   = {e => e.key === 'Enter' && !e.shiftKey && handleSend()}
           disabled    = {streaming}
         />
-        <button
-          className = "btn btn-primary flex-shrink-0"
-          onClick   = {handleSend}
-          disabled  = {streaming || !question.trim()}
-        >
-          {streaming ? <><div className="spinner" /> …</> : 'Send ↵'}
-        </button>
+
+        {streaming ? (
+          /* Stop button — visible only while generating */
+          <button
+            id        = "llm-stop-btn"
+            className = "btn flex-shrink-0"
+            onClick   = {handleStop}
+            title     = "Stop generating"
+            style={{
+              background: 'rgba(248,81,73,.15)',
+              border:     '1px solid rgba(248,81,73,.5)',
+              color:      '#f85149',
+              fontWeight: 600,
+            }}
+          >
+            ⏹️ Stop
+          </button>
+        ) : (
+          <button
+            id        = "llm-send-btn"
+            className = "btn btn-primary flex-shrink-0"
+            onClick   = {handleSend}
+            disabled  = {!question.trim()}
+          >
+            Send ↵
+          </button>
+        )}
+
         {history.length > 0 && (
           <button
             className = "btn flex-shrink-0"

@@ -202,19 +202,25 @@ export async function getCsvPreview(params) {
  * Stream an LLM chat response via Server-Sent Events.
  *
  * Reads the SSE stream from POST /api/llm/chat using fetch + ReadableStream.
- * Calls onToken(str) for each token chunk.
- * Calls onDone() when the model finishes.
- * Calls onError(str) on any error.
+ * Calls onToken(str)   for each token chunk.
+ * Calls onDone()       when the model finishes naturally.
+ * Calls onError(str)   on any network / model error.
+ * Calls onStopped()    when the user aborts mid-stream (optional).
+ *
+ * @param {AbortSignal} [signal]    - Optional AbortSignal from an AbortController
+ * @param {function}    [onStopped] - Called when aborted by the user
  */
-export async function streamLLMChat(params, onToken, onDone, onError) {
+export async function streamLLMChat(params, onToken, onDone, onError, signal, onStopped) {
   let res
   try {
     res = await fetch(BASE_URL + '/api/llm/chat', {
       method:  'POST',
       headers: jsonHeaders(),
       body:    JSON.stringify(params),
+      signal,                        // ← AbortController signal
     })
   } catch (err) {
+    if (err.name === 'AbortError') { onStopped?.(); return }
     onError(`Network error: ${err.message}`)
     return
   }
@@ -228,25 +234,34 @@ export async function streamLLMChat(params, onToken, onDone, onError) {
   const decoder = new TextDecoder()
   let buffer    = ''
 
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
+  try {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
 
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop()   // keep last incomplete line
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop()   // keep last incomplete line
 
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue
-      try {
-        const event = JSON.parse(line.slice(6))
-        if (event.type === 'token') onToken(event.content)
-        else if (event.type === 'done')  onDone()
-        else if (event.type === 'error') onError(event.content)
-      } catch {
-        // malformed JSON chunk — skip
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        try {
+          const event = JSON.parse(line.slice(6))
+          if (event.type === 'token') onToken(event.content)
+          else if (event.type === 'done')  onDone()
+          else if (event.type === 'error') onError(event.content)
+        } catch {
+          // malformed JSON chunk — skip
+        }
       }
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      reader.cancel()   // release the stream lock
+      onStopped?.()
+    } else {
+      onError(`Stream read error: ${err.message}`)
     }
   }
 }
