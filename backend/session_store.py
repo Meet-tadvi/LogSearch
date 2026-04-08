@@ -1,34 +1,15 @@
 """
-Session Store
-=============
+Session Store — v3
+==================
 Two-layer storage for parsed log data.
 
   Hot  layer — SearchOperations in RAM  (fast index lookups)
   Cold layer — LogEntry list in JSON on disk (survives server restarts)
 
-Lifecycle
----------
-  Parse     → tag entries with source_file
-            → save entries to JSON (cold)
-            → build SearchOperations (hot)
-            → register FileData in session
-
-  Restart   → scan data/sessions/ for existing session dirs
-            → load JSON (cold) → rebuild SearchOperations (hot)
-            → session is fully restored
-
-  Search    → get_combined_ops() merges selected files in RAM
-            → SearchOperations.find_combined() — no disk read
-
-  Delete    → remove from RAM + delete JSON files
-
-Disk layout
------------
-  data/sessions/
-  └── <session_uuid>/
-      ├── session.json              registry (filenames, format, stats)
-      ├── <file_id>_entries.json    serialised LogEntry list
-      └── <file_id>_unparsed.json   unparsed lines
+Key change from v2:
+  FileData stores field_definitions [{name,type}] instead of available_fields [str].
+  time_range computed from whichever field has type 'timestamp'.
+  No available_fields list — field_definitions carries all necessary info.
 """
 
 import json
@@ -41,8 +22,7 @@ from log_parser import LogEntry
 from search_operations import SearchOperations
 
 
-# ── Data directory ────────────────────────────────────────────────
-DATA_DIR          = Path(__file__).parent / "data" / "sessions"
+DATA_DIR          = Path(__file__).parent / 'data' / 'sessions'
 SESSION_TTL_HOURS = 24
 
 
@@ -60,22 +40,24 @@ class FileData:
     detection_confidence: float
     entry_count:          int
     unparsed_count:       int
-    available_fields:     List[str]
+    field_definitions:    List[Dict]         # [{name, type}, ...]
     search_ops:           SearchOperations   # hot layer — RAM
     entries_path:         str               # cold layer — disk path
     unparsed_path:        str               # cold layer — disk path
-    time_range:           dict = field(default_factory=lambda: {'start': None, 'end': None})
+    time_range:           dict = field(
+        default_factory=lambda: {'start': None, 'end': None}
+    )
 
 
 @dataclass
 class SessionData:
     """One browser session — holds all uploaded files."""
     session_id: str
-    files:      Dict[str, FileData]  = field(default_factory=dict)
-    last_seen:  datetime             = field(default_factory=datetime.utcnow)
+    files:      Dict[str, FileData] = field(default_factory=dict)
+    last_seen:  datetime            = field(default_factory=datetime.utcnow)
 
 
-# ── Global in-memory registry ────────────────────────────────────
+# Global in-memory registry
 _sessions: Dict[str, SessionData] = {}
 
 
@@ -103,7 +85,7 @@ def _save_session_json(session: SessionData):
                 'detection_confidence': f.detection_confidence,
                 'entry_count':          f.entry_count,
                 'unparsed_count':       f.unparsed_count,
-                'available_fields':     f.available_fields,
+                'field_definitions':    f.field_definitions,
                 'entries_path':         f.entries_path,
                 'unparsed_path':        f.unparsed_path,
                 'time_range':           f.time_range,
@@ -115,55 +97,54 @@ def _save_session_json(session: SessionData):
     path.write_text(json.dumps(registry, indent=2), encoding='utf-8')
 
 
-def _save_entries_json(session_id: str, file_id: str,
-                       entries: List[LogEntry]) -> str:
-    """Serialise LogEntry list to JSON. Returns the file path."""
+def _save_entries_json(
+    session_id: str,
+    file_id:    str,
+    entries:    List[LogEntry],
+) -> str:
+    """Serialise LogEntry list to JSON. Returns the file path string."""
     path = _session_dir(session_id) / f'{file_id}_entries.json'
-    data = [e.to_dict() for e in entries]
-    path.write_text(json.dumps(data), encoding='utf-8')
+    path.write_text(json.dumps([e.to_dict() for e in entries]), encoding='utf-8')
     return str(path)
 
 
-def _save_unparsed_json(session_id: str, file_id: str,
-                        unparsed: List[dict]) -> str:
-    """Serialise unparsed lines to JSON. Returns the file path."""
+def _save_unparsed_json(
+    session_id: str,
+    file_id:    str,
+    unparsed:   List[dict],
+) -> str:
+    """Serialise unparsed lines to JSON. Returns the file path string."""
     path = _session_dir(session_id) / f'{file_id}_unparsed.json'
     path.write_text(json.dumps(unparsed), encoding='utf-8')
     return str(path)
 
 
-def _load_entries_from_json(entries_path: str,
-                             available_fields: List[str],
-                             filename: str) -> SearchOperations:
+def _load_entries_from_json(
+    entries_path:      str,
+    field_definitions: List[Dict],
+    filename:          str,
+) -> SearchOperations:
     """
-    Load LogEntry list from JSON and rebuild SearchOperations.
-    Called on server restart to restore the hot layer from disk.
+    Rebuild SearchOperations from cold JSON.
+    Called on server restart to restore the hot layer.
     """
     path = Path(entries_path)
     if not path.exists():
-        return SearchOperations(logs=[], available_fields=available_fields)
+        return SearchOperations(logs=[], field_definitions=field_definitions)
 
     raw_list = json.loads(path.read_text(encoding='utf-8'))
     entries  = []
     for d in raw_list:
         entry = LogEntry(
-            timestamp          = d.get('timestamp', ''),
-            message            = d.get('message', ''),
-            raw_line           = d.get('raw_line', ''),
             actual_line_number = d.get('actual_line_number', 0),
-            component          = d.get('component'),
-            level              = d.get('level'),
-            thread_id          = d.get('thread_id'),
-            file_path          = d.get('file_path'),
-            line_number        = d.get('line_number'),
-            extra_fields       = d.get('extra_fields') or {},
+            raw_line           = d.get('raw_line', ''),
             format_name        = d.get('format_name', 'unknown'),
-            timestamp_dt       = d.get('timestamp_dt'),
+            fields             = d.get('fields', {}),
             source_file        = d.get('source_file', filename),
         )
         entries.append(entry)
 
-    return SearchOperations(logs=entries, available_fields=available_fields)
+    return SearchOperations(logs=entries, field_definitions=field_definitions)
 
 
 # ================================================================
@@ -187,19 +168,23 @@ def get(session_id: str) -> Optional[SessionData]:
 
 
 def register_file(
-    session_id:   str,
-    file_id:      str,
-    filename:     str,
-    entries:      List[LogEntry],
-    unparsed:     List[dict],
-    format_name:  str,
-    parse_rate:   float,
-    confidence:   float,
-    avail_fields: List[str],
+    session_id:        str,
+    file_id:           str,
+    filename:          str,
+    entries:           List[LogEntry],
+    unparsed:          List[dict],
+    format_name:       str,
+    parse_rate:        float,
+    confidence:        float,
+    field_definitions: List[Dict],
 ) -> FileData:
     """
     Called after a file is successfully parsed.
-    Saves data to disk (cold layer) and builds SearchOperations (hot layer).
+    1. Tags every entry with source_file = filename
+    2. Saves entries to disk (cold layer)
+    3. Builds SearchOperations in RAM (hot layer)
+    4. Computes time_range from the timestamp field
+    5. Persists registry to session.json
     Returns the registered FileData.
     """
     session = get_or_create(session_id)
@@ -213,15 +198,25 @@ def register_file(
     unparsed_path = _save_unparsed_json(session_id, file_id, unparsed)
 
     # Hot layer — build in-memory index
-    search_ops = SearchOperations(logs=entries, available_fields=avail_fields)
+    search_ops = SearchOperations(
+        logs              = entries,
+        field_definitions = field_definitions,
+    )
 
-    # Compute time range from entries
-    timestamps = [e.timestamp_dt or e.timestamp for e in entries
-                  if e.timestamp_dt or e.timestamp]
-    time_range = {
-        'start': min(timestamps) if timestamps else None,
-        'end':   max(timestamps) if timestamps else None,
-    }
+    # Compute time_range from whichever field has type 'timestamp'
+    timestamp_field = next(
+        (f['name'] for f in field_definitions if f['type'] == 'timestamp'),
+        None
+    )
+    time_range = {'start': None, 'end': None}
+    if timestamp_field:
+        ts_vals = [
+            e.fields[timestamp_field]
+            for e in entries
+            if e.fields.get(timestamp_field)
+        ]
+        if ts_vals:
+            time_range = {'start': ts_vals[0], 'end': ts_vals[-1]}
 
     file_data = FileData(
         file_id              = file_id,
@@ -231,15 +226,13 @@ def register_file(
         detection_confidence = confidence,
         entry_count          = len(entries),
         unparsed_count       = len(unparsed),
-        available_fields     = avail_fields,
+        field_definitions    = field_definitions,
         search_ops           = search_ops,
         entries_path         = entries_path,
         unparsed_path        = unparsed_path,
         time_range           = time_range,
     )
     session.files[file_id] = file_data
-
-    # Persist registry
     _save_session_json(session)
     return file_data
 
@@ -251,7 +244,6 @@ def delete_file(session_id: str, file_id: str):
         return
     file_data = session.files.pop(file_id, None)
     if file_data:
-        # Remove JSON files from disk
         for p in (file_data.entries_path, file_data.unparsed_path):
             try:
                 Path(p).unlink(missing_ok=True)
@@ -261,13 +253,12 @@ def delete_file(session_id: str, file_id: str):
 
 
 def delete_session(session_id: str):
-    """Wipe entire session — memory + all JSON files."""
+    """Wipe entire session — memory + all JSON files on disk."""
     session = _sessions.pop(session_id, None)
     if session:
         import shutil
-        session_dir = DATA_DIR / session_id
         try:
-            shutil.rmtree(session_dir, ignore_errors=True)
+            shutil.rmtree(DATA_DIR / session_id, ignore_errors=True)
         except OSError:
             pass
 
@@ -277,47 +268,38 @@ def get_combined_ops(
     file_ids: Optional[List[str]] = None,
 ) -> Optional[SearchOperations]:
     """
-    Merge the LogEntry lists from the selected files and return
-    a single SearchOperations over all of them.
+    Merge selected files into one SearchOperations instance.
 
-    If no file_ids given → use all files in session.
+    field_definitions = union of all selected files' fields (deduped by name).
+    Entries from all files concatenated in selection order.
     Returns None if session has no files.
-
-    Multi-file merging:
-      - Combined logs sorted by timestamp_dt so cross-file results
-        appear in chronological order.
-      - available_fields = union of all selected files' fields.
-      - Each LogEntry already carries source_file so callers can
-        filter by file after the fact.
     """
-    if file_ids:
-        selected = [session.files[fid] for fid in file_ids
-                    if fid in session.files]
-    else:
-        selected = list(session.files.values())
-
+    selected = (
+        [session.files[fid] for fid in file_ids if fid in session.files]
+        if file_ids
+        else list(session.files.values())
+    )
     if not selected:
         return None
 
-    combined_logs:   List[LogEntry] = []
-    combined_fields: set            = set()
+    combined_logs:  List[LogEntry] = []
+    seen_fields:    Dict[str, str] = {}   # name -> type, deduped
 
     for f in selected:
         combined_logs.extend(f.search_ops.logs)
-        combined_fields.update(f.search_ops.available_fields)
+        for fdef in f.field_definitions:
+            # First file's type wins on name collision
+            if fdef['name'] not in seen_fields:
+                seen_fields[fdef['name']] = fdef['type']
 
-    # Sort merged list by normalised timestamp so results are chronological
-    # Fix 4: entries where timestamp_dt is None (failed parsing) sort to the END.
-    # Old key used raw timestamp as fallback — "18-02..." < "1900-04..." alphabetically,
-    # causing entries with invalid months to appear before valid ones.
-    # '9999' is greater than any valid ISO timestamp so None entries go last.
-    combined_logs.sort(
-        key=lambda e: (e.timestamp_dt or '9999', e.actual_line_number)
-    )
+    combined_fields = [
+        {'name': name, 'type': ftype}
+        for name, ftype in seen_fields.items()
+    ]
 
     return SearchOperations(
-        logs             = combined_logs,
-        available_fields = list(combined_fields),
+        logs              = combined_logs,
+        field_definitions = combined_fields,
     )
 
 
@@ -326,12 +308,11 @@ def get_unparsed(
     file_ids: Optional[List[str]] = None,
 ) -> List[dict]:
     """Return unparsed lines for the selected (or all) files."""
-    if file_ids:
-        selected = [session.files[fid] for fid in file_ids
-                    if fid in session.files]
-    else:
-        selected = list(session.files.values())
-
+    selected = (
+        [session.files[fid] for fid in file_ids if fid in session.files]
+        if file_ids
+        else list(session.files.values())
+    )
     result = []
     for f in selected:
         try:
@@ -352,8 +333,8 @@ def get_unparsed(
 def restore_sessions():
     """
     Called on server startup.
-    Scans data/sessions/ and rebuilds any sessions whose JSON files
-    still exist on disk.
+    Scans data/sessions/ and rebuilds sessions whose JSON files still exist.
+    Expired sessions (> SESSION_TTL_HOURS) are deleted from disk.
     """
     if not DATA_DIR.exists():
         return
@@ -371,27 +352,24 @@ def restore_sessions():
             session_id = registry['session_id']
             last_seen  = datetime.fromisoformat(registry['last_seen'])
 
-            # Skip expired sessions
+            # Delete expired sessions
             if datetime.utcnow() - last_seen > timedelta(hours=SESSION_TTL_HOURS):
                 import shutil
                 shutil.rmtree(session_dir, ignore_errors=True)
                 continue
 
-            session            = SessionData(session_id=session_id, last_seen=last_seen)
+            session               = SessionData(session_id=session_id, last_seen=last_seen)
             _sessions[session_id] = session
 
             for fid, info in registry.get('files', {}).items():
-                entries_path  = info.get('entries_path', '')
-                avail_fields  = info.get('available_fields', [])
-                filename      = info.get('filename', '')
-
-                # Rebuild hot layer from cold layer
+                field_definitions = info.get('field_definitions', [])
                 search_ops = _load_entries_from_json(
-                    entries_path, avail_fields, filename
+                    info.get('entries_path', ''),
+                    field_definitions,
+                    info.get('filename', ''),
                 )
 
-                # Load unparsed count from file
-                up_path = Path(info.get('unparsed_path', ''))
+                up_path  = Path(info.get('unparsed_path', ''))
                 up_count = 0
                 if up_path.exists():
                     try:
@@ -401,34 +379,31 @@ def restore_sessions():
 
                 session.files[fid] = FileData(
                     file_id              = info['file_id'],
-                    filename             = filename,
+                    filename             = info.get('filename', ''),
                     format_name          = info.get('format_name', 'unknown'),
                     parse_rate           = info.get('parse_rate', 0.0),
                     detection_confidence = info.get('detection_confidence', 0.0),
                     entry_count          = info.get('entry_count', len(search_ops.logs)),
                     unparsed_count       = up_count,
-                    available_fields     = avail_fields,
+                    field_definitions    = field_definitions,
                     search_ops           = search_ops,
-                    entries_path         = entries_path,
+                    entries_path         = info.get('entries_path', ''),
                     unparsed_path        = info.get('unparsed_path', ''),
                     time_range           = info.get('time_range', {'start': None, 'end': None}),
                 )
 
             restored += 1
         except Exception as e:
-            print(f"[session_store] Could not restore session {session_dir.name}: {e}")
+            print(f'[session_store] Could not restore {session_dir.name}: {e}')
 
     if restored:
-        print(f"[session_store] Restored {restored} session(s) from disk.")
+        print(f'[session_store] Restored {restored} session(s) from disk.')
 
 
 def cleanup_expired() -> int:
     """Delete sessions older than SESSION_TTL_HOURS. Returns count deleted."""
     cutoff = datetime.utcnow() - timedelta(hours=SESSION_TTL_HOURS)
-    stale  = [
-        sid for sid, s in _sessions.items()
-        if s.last_seen < cutoff
-    ]
+    stale  = [sid for sid, s in _sessions.items() if s.last_seen < cutoff]
     for sid in stale:
         delete_session(sid)
     return len(stale)

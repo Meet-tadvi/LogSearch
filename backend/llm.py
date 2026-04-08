@@ -1,134 +1,84 @@
 """
-LLM Module
-==========
-Builds CSV context from match results and streams Ollama responses
-as Server-Sent Events (SSE).
-
-Multi-turn strategy:
-    Turn 1 : system = SYSTEM_PROMPT + full CSV  |  user = question
-    Turn N : system = SYSTEM_PROMPT + full CSV  |  history + user = stat_header + question
-
-    CSV lives in the system message — paid once per call.
-    Follow-up turns only add history + a compact stat reminder.
-    This keeps follow-up token cost low while the model always has
-    the full dataset in context (Ollama is stateless — no memory
-    between calls, so CSV must be re-sent every time).
-
-Change model:
-    Edit OLLAMA_MODEL below.  Run: ollama pull <model_name> first.
+LLM Module — v3
+===============
+Dynamic CSV builder — uses field_definitions instead of hardcoded field names.
+Added: ask_ollama_for_format() for AI-assisted format generation.
 """
 
 import csv
 import io
 import json
-from typing import List, Dict, Optional, AsyncGenerator
+from typing import List, Dict, AsyncGenerator
 
-
-# ── Change this to switch models ─────────────────────────────────
-OLLAMA_MODEL = 'deepseek-v3.1:671b-cloud'   # e.g. 'llama3.2', 'mistral', 'gemma2'
-# ─────────────────────────────────────────────────────────────────
+OLLAMA_MODEL = 'llama3.1'
 
 SYSTEM_PROMPT = """You are a log file analysis assistant.
 You have been given COMPLETE log data as a CSV table — every filtered row is present.
-Columns: source_file, line, timestamp, and any available fields from:
-component, level, thread, file (source code file), message, extra_* fields.
+The first row is the header — it shows you exactly which fields exist in this log format.
 Answer questions based ONLY on the data provided.
-Reference specific line numbers and timestamps when relevant.
+Reference specific line numbers when relevant.
 When counting or aggregating, use the FULL dataset — do not estimate.
 Be concise and precise."""
 
 
 # ================================================================
-# CSV builder
+# CSV builder — fully dynamic
 # ================================================================
 
 def build_csv_from_matches(
-    matches:          List[Dict],
-    available_fields: List[str],
+    matches:           List[Dict],
+    field_definitions: List[Dict],   # [{name, type}, ...]
 ) -> str:
     """
-    Convert a list of match dicts (from SearchOperations.find_combined)
-    to a CSV string for the LLM context.
-
-    Always includes: source_file, line, timestamp, message.
-    Conditionally includes: component, level, thread_id, file_path.
-    Appends extra_* columns for any extra fields present.
-
-    csv.writer auto-quotes cells that contain commas, quotes, or newlines
-    so log messages with commas are handled correctly with no extra code.
+    Build CSV from match dicts.
+    Columns: source_file, line, then every field in definition order.
+    csv.writer handles quoting of values that contain commas or newlines.
     """
     if not matches:
         return ''
 
-    avail = set(available_fields)
-    buf   = io.StringIO()
-
-    # Build header
-    headers = ['source_file', 'line', 'timestamp']
-    if 'component'  in avail: headers.append('component')
-    if 'level'      in avail: headers.append('level')
-    if 'thread_id'  in avail: headers.append('thread')
-    if 'file_path'  in avail: headers.append('file')
-    headers.append('message')
-
-    # Collect all extra field keys present across matches
-    extra_keys = sorted({
-        k
-        for m in matches
-        for k in (m.get('extra_fields') or {}).keys()
-    })
-    headers.extend(f'extra_{k}' for k in extra_keys)
-
-    writer = csv.writer(buf)
+    buf         = io.StringIO()
+    writer      = csv.writer(buf)
+    field_names = [f['name'] for f in field_definitions]
+    headers     = ['source_file', 'line'] + field_names
     writer.writerow(headers)
 
     for m in matches:
         row = [
             m.get('source_file', ''),
             m.get('actual_line_number', ''),
-            m.get('timestamp', ''),
         ]
-        if 'component'  in avail: row.append(m.get('component')  or '')
-        if 'level'      in avail: row.append(m.get('level')      or '')
-        if 'thread_id'  in avail: row.append(m.get('thread_id')  or '')
-        if 'file_path'  in avail: row.append(m.get('file_path')  or '')
-        row.append(m.get('message', ''))
-        ef = m.get('extra_fields') or {}
-        for k in extra_keys:
-            row.append(ef.get(k, ''))
+        fields = m.get('fields', {})
+        for fname in field_names:
+            row.append(fields.get(fname, ''))
         writer.writerow(row)
 
     return buf.getvalue()
 
 
 # ================================================================
-# Stat header (compact summary re-sent on every turn)
+# Stat header
 # ================================================================
 
 def build_stat_header(match_summary: Dict) -> str:
-    """
-    Compact plain-text summary of the filtered dataset.
-    Included in every user message so the model always knows
-    the dataset size even on turn 3, 4, etc.
-    """
+    """Compact plain-text summary included in every follow-up LLM turn."""
     tr    = match_summary.get('time_range', {})
     lr    = match_summary.get('line_range', {})
     total = match_summary.get('total', 0)
 
     lines = [
         '=== CURRENT FILTER CONTEXT ===',
-        f"Total entries  : {total:,}",
-        f"Line range     : {lr.get('first', '?')} → {lr.get('last', '?')}",
-        f"Time range     : {tr.get('first', '?')} → {tr.get('last', '?')}",
+        f"Total entries : {total:,}",
+        f"Line range    : {lr.get('first', '?')} -> {lr.get('last', '?')}",
     ]
-    if match_summary.get('levels'):
-        level_str = ', '.join(
-            f"{k}:{v}" for k, v in match_summary['levels'].items()
+    if tr:
+        lines.append(
+            f"Time range    : {tr.get('first', '?')} -> {tr.get('last', '?')}"
         )
-        lines.append(f"Levels         : {level_str}")
-    if match_summary.get('components'):
-        top = list(match_summary['components'].items())[:6]
-        lines.append(f"Top components : {top}")
+    dists = match_summary.get('distributions', {})
+    for fname, dist in list(dists.items())[:4]:
+        top = list(dist.items())[:5]
+        lines.append(f"{fname:14}: {top}")
 
     return '\n'.join(lines)
 
@@ -145,29 +95,20 @@ def build_messages(
 ) -> List[Dict]:
     """
     Assemble the messages list for Ollama.
-
-    Turn 1 (empty history):
-        system = SYSTEM_PROMPT + CSV
-        user   = question
-
-    Turn N (has history):
-        system  = SYSTEM_PROMPT + CSV  (re-attached — Ollama is stateless)
-        history = all prior turns
-        user    = stat_header + question
+    Turn 1: system = SYSTEM_PROMPT + CSV,  user = question
+    Turn N: system = SYSTEM_PROMPT + CSV,  history, user = stat_header + question
+    CSV always in system message — Ollama is stateless, must re-send every call.
     """
     system_content = (
         f"{SYSTEM_PROMPT}\n\n"
         f"=== COMPLETE LOG DATA (CSV) ===\n"
         f"{csv_data}"
     )
-
     messages = [{'role': 'system', 'content': system_content}]
 
     if not history:
-        # First turn — just the question
         messages.append({'role': 'user', 'content': question})
     else:
-        # Subsequent turns — replay history then compact header + question
         for turn in history:
             messages.append({'role': turn['role'], 'content': turn['content']})
         stat_header = build_stat_header(match_summary)
@@ -175,7 +116,6 @@ def build_messages(
             'role':    'user',
             'content': f"{stat_header}\n\nQuestion: {question}",
         })
-
     return messages
 
 
@@ -191,14 +131,7 @@ async def stream_ollama_response(
 ) -> AsyncGenerator[str, None]:
     """
     Async generator that yields Server-Sent Event strings.
-
-    SSE format (each yielded string is one complete SSE event):
-        data: {"type": "token",  "content": "Hello"}\\n\\n
-        data: {"type": "done",   "content": ""}\\n\\n
-        data: {"type": "error",  "content": "Error message"}\\n\\n
-
-    The browser's EventSource.onmessage receives the JSON after
-    the 'data: ' prefix is stripped automatically.
+    Events: {"type": "token", "content": "..."} | {"type": "done"} | {"type": "error"}
     """
     try:
         import ollama
@@ -221,8 +154,10 @@ async def stream_ollama_response(
             stream   = True,
             options  = {
                 'temperature': 0.1,
-                'num_ctx':     32768,    # 32k context — fits in 6GB VRAM
-                'num_gpu':     99,       # offload ALL layers to GPU (RTX 4050)
+                'num_ctx':     8192,   # 8K — safe for llama3.1 8B on 6GB VRAM
+                                       # (model ~4.7GB + KV cache ~1GB = ~5.7GB total)
+                                       # Use narrow filters to keep CSV under ~6K tokens
+                'num_gpu':     99,     # offload ALL layers to GPU
                 'num_thread':  8,
             }
         )
@@ -230,17 +165,138 @@ async def stream_ollama_response(
             token = chunk.get('message', {}).get('content', '')
             if token:
                 yield _sse({'type': 'token', 'content': token})
-
         yield _sse({'type': 'done', 'content': ''})
 
     except Exception as e:
         yield _sse({'type': 'error', 'content': (
-            f"Ollama error: {e}\n\n"
-            f"Troubleshooting:\n"
-            f"• Make sure Ollama is running: ollama serve\n"
-            f"• Pull the model: ollama pull {OLLAMA_MODEL}\n"
-            f"• Context too large? Narrow your filters to reduce entries."
+            f"Ollama error: {e}\n"
+            f"* Make sure Ollama is running: ollama serve\n"
+            f"* Pull the model: ollama pull {OLLAMA_MODEL}\n"
+            f"* Context too large? Narrow your filters."
         )})
+
+
+# ================================================================
+# Format generation via LLM
+# ================================================================
+
+FORMAT_GENERATION_PROMPT = """You are an expert log format analyser and Python regex writer.
+Given sample log lines, produce a complete log format definition as a JSON object.
+
+RULES:
+1. pattern must use Python named capture groups: (?P<name>...)
+2. pattern MUST include (?P<message>...) — always required
+3. Include (?P<timestamp>...) only if a date/time is present in the lines
+4. fields is a list of {name, type} objects — one per named group in the pattern
+5. Field types — choose the best fit:
+     timestamp : date/time of the log entry
+     level     : severity (INFO/ERROR/WARNING/DEBUG or similar abbreviations)
+     message   : the main log text (usually the last field)
+     text      : any repeating categorical value (component, module, thread id, filename, etc.)
+     number    : numeric value (line numbers, counts, durations, etc.)
+6. Every named group in the pattern MUST appear in fields, and vice versa
+7. Return ONLY valid JSON — no explanation, no markdown, no code fences
+
+EXAMPLE OUTPUT:
+{
+  "name":        "my_app_logs",
+  "description": "Application server logs",
+  "pattern":     "(?P<timestamp>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}) (?P<level>\\w+) (?P<service>\\S+) (?P<message>.+)",
+  "fields": [
+    {"name": "timestamp", "type": "timestamp"},
+    {"name": "level",     "type": "level"},
+    {"name": "service",   "type": "text"},
+    {"name": "message",   "type": "message"}
+  ],
+  "example": "2025-04-17 08:35:19 ERROR auth-service Login failed for user john"
+}
+
+Now analyse these sample lines and return the JSON format definition:
+"""
+
+
+async def ask_ollama_for_format(sample_lines: List[str]) -> Dict:
+    """
+    Send sample log lines to Ollama and get back a complete
+    format definition dict ready to pre-fill the add-format form.
+    Validates that the generated pattern compiles and matches at least one sample line.
+    """
+    import re as _re
+
+    try:
+        import ollama
+    except ImportError:
+        raise Exception('ollama package not installed. Run: pip install ollama')
+
+    lines_text = '\n'.join(
+        f"Line {i + 1}: {line.strip()}"
+        for i, line in enumerate(sample_lines[:10])
+    )
+
+    messages = [
+        {'role': 'system', 'content': FORMAT_GENERATION_PROMPT},
+        {'role': 'user',   'content': lines_text},
+    ]
+
+    try:
+        response = ollama.chat(
+            model    = OLLAMA_MODEL,
+            messages = messages,
+            stream   = False,
+            options  = {
+                'temperature': 0.0,   # fully deterministic for code generation
+                'num_ctx':     8192,
+            }
+        )
+
+        raw_text = response['message']['content'].strip()
+
+        # Strip markdown code fences if the model adds them despite instructions
+        if raw_text.startswith('```'):
+            raw_lines = raw_text.split('\n')
+            raw_text  = '\n'.join(raw_lines[1:-1])
+
+        result = json.loads(raw_text)
+
+        # Validate required keys
+        for key in ('pattern', 'fields'):
+            if key not in result:
+                raise ValueError(f"LLM response missing required key: '{key}'")
+
+        # Validate pattern compiles
+        compiled = _re.compile(result['pattern'])
+
+        # Validate message group exists
+        groups = set(compiled.groupindex.keys())
+        if 'message' not in groups:
+            raise ValueError("Generated pattern is missing (?P<message>...) group")
+
+        # Validate field names match pattern groups
+        field_names = {f['name'] for f in result.get('fields', [])}
+        undefined   = field_names - groups
+        if undefined:
+            raise ValueError(f"Fields {undefined} not in pattern groups")
+
+        # Test against sample lines and attach match stats
+        matched = sum(1 for l in sample_lines if compiled.match(l.strip()))
+        result['match_rate']    = round(matched / len(sample_lines) * 100, 1)
+        result['matched_lines'] = matched
+        result['total_lines']   = len(sample_lines)
+
+        return result
+
+    except json.JSONDecodeError as e:
+        raise Exception(
+            f"LLM returned invalid JSON: {e}. "
+            f"Try again or adjust the sample lines."
+        )
+    except ValueError as e:
+        raise Exception(str(e))
+    except Exception as e:
+        raise Exception(
+            f"Ollama error: {e}. "
+            f"Make sure Ollama is running: ollama serve"
+        )
 
 
 # ================================================================
@@ -248,7 +304,7 @@ async def stream_ollama_response(
 # ================================================================
 
 def estimate_tokens(csv_data: str) -> int:
-    """Rough token estimate: 1 token ≈ 4 characters."""
+    """Rough estimate: 1 token ~ 4 characters."""
     return len(csv_data) // 4
 
 

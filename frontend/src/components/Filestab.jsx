@@ -1,8 +1,6 @@
 /**
- * FilesTab.jsx — dedicated tab for uploaded file cards
- * Shows all file metadata clearly: format, entries, parse rate,
- * time range, confidence, unparsed count. Each card has a
- * select toggle and delete button.
+ * FilesTab.jsx — v4 (UI Redesign)
+ * Better file cards with parse rate bars, stronger selected state, cleaner stats grid.
  */
 
 export default function FilesTab({
@@ -11,8 +9,20 @@ export default function FilesTab({
 }) {
   if (files.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-muted text-sm">
-        No files uploaded yet — drag &amp; drop a log file into the sidebar.
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        height: 320,
+        gap: 12,
+        color: '#6e7681',
+      }}>
+        <div style={{ fontSize: 36, opacity: 0.4 }}>📁</div>
+        <div style={{ fontFamily: 'Inter, sans-serif', fontSize: 14 }}>No files uploaded yet</div>
+        <div style={{ fontFamily: 'Inter, sans-serif', fontSize: 12, color: '#484f58' }}>
+          Drag & drop a log file into the sidebar to get started
+        </div>
       </div>
     )
   }
@@ -26,26 +36,31 @@ export default function FilesTab({
   }
 
   return (
-    <div className="flex flex-col gap-4 w-full">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: '100%' }}>
 
       {/* ── Toolbar ── */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <span className="font-mono font-bold text-accent text-xs">
-          // files ({files.length})
-        </span>
-        <span className="text-muted text-xs">
-          {selectedIds.length} of {files.length} selected
-        </span>
-        <div className="flex gap-2 ml-auto">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <span style={{ fontFamily: 'Inter, sans-serif', fontWeight: 700, fontSize: 16, color: '#e6edf3', letterSpacing: '-0.01em' }}>
+            Uploaded Files
+          </span>
+          <span style={{ fontFamily: 'Inter, sans-serif', fontSize: 12, color: '#6e7681', marginTop: 1 }}>
+            {selectedIds.length} of {files.length} selected for analysis
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
           <button
-            className="btn text-xs px-3 py-1"
+            className="btn"
+            style={{ fontSize: 12 }}
             onClick={onSelectAll}
             disabled={allSelected}
           >
             Select All
           </button>
           <button
-            className="btn text-xs px-3 py-1"
+            className="btn"
+            style={{ fontSize: 12 }}
             onClick={onDeselectAll}
             disabled={noneSelected}
           >
@@ -55,99 +70,134 @@ export default function FilesTab({
       </div>
 
       {/* ── File cards grid ── */}
-      <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))' }}>
+      <div style={{ display: 'grid', gap: 14, gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))' }}>
         {files.map(f => {
-          const selected   = selectedIds.includes(f.file_id)
-          const rateColor  = f.parse_rate < 80 ? '#f85149' : f.parse_rate < 95 ? '#d29922' : '#3fb950'
-          const confColor  = (f.confidence ?? f.detection_confidence ?? 0) < 60 ? '#d29922' : '#3fb950'
+          const selected    = selectedIds.includes(f.file_id)
+          const parseRate   = f.parse_rate ?? 0
+          const confidence  = f.confidence ?? f.detection_confidence ?? 0
           const hasUnparsed = (f.unparsed_count || 0) > 0
+
+          const rateColor = parseRate  < 80 ? '#f85149' : parseRate  < 95 ? '#d29922' : '#3fb950'
+          const confColor = confidence < 60 ? '#d29922' : '#3fb950'
 
           return (
             <div
               key       = {f.file_id}
-              className = "card cursor-pointer"
+              className = "card card-hover"
               style     = {{
-                borderLeft:  `3px solid ${selected ? '#f0a500' : '#30363d'}`,
-                background:  selected ? 'rgba(240,165,0,.04)' : undefined,
-                transition:  'border-color .15s, background .15s',
+                borderLeft:  `3px solid ${selected ? '#f0a500' : '#21262d'}`,
+                background:  selected ? 'rgba(240,165,0,0.04)' : '#161b22',
+                cursor:      'pointer',
+                transition:  'border-color .18s, background .18s, box-shadow .18s',
               }}
               onClick={() => onToggleFile(f.file_id)}
             >
               {/* ── Card header ── */}
-              <div className="flex items-start gap-2 mb-3">
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 14 }}>
                 <input
                   type     = "checkbox"
                   checked  = {selected}
                   onChange = {() => onToggleFile(f.file_id)}
                   onClick  = {e => e.stopPropagation()}
-                  className= "mt-0.5 accent-accent flex-shrink-0"
+                  style    = {{ accentColor: '#f0a500', marginTop: 3, flexShrink: 0, width: 15, height: 15 }}
                 />
-                <div className="flex-1 min-w-0">
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div
-                    className="font-mono font-bold text-xs break-all"
-                    style={{ color: selected ? '#f0a500' : '#e6edf3' }}
+                    style={{
+                      fontFamily: 'JetBrains Mono, monospace',
+                      fontWeight: 600,
+                      fontSize: 13,
+                      color: selected ? '#f0a500' : '#e6edf3',
+                      wordBreak: 'break-all',
+                      lineHeight: 1.4,
+                    }}
                     title={f.filename}
                   >
                     {f.filename}
                   </div>
                   {f.format && (
-                    <span className="chip text-xs mt-1 inline-block" style={{ color: '#58a6ff', borderColor: '#58a6ff55' }}>
+                    <span className="chip" style={{
+                      marginTop: 6,
+                      display: 'inline-flex',
+                      color: '#79c0ff',
+                      borderColor: 'rgba(88,166,255,0.3)',
+                      background: 'rgba(88,166,255,0.1)',
+                      fontSize: 10,
+                    }}>
                       {f.format}
                     </span>
                   )}
                 </div>
                 <button
-                  className = "btn btn-danger flex-shrink-0 text-xs px-2 py-0.5"
+                  className = "btn btn-danger"
+                  style     = {{ flexShrink: 0, fontSize: 11, padding: '4px 9px' }}
                   onClick   = {e => { e.stopPropagation(); onDeleteFile(f.file_id) }}
                   title     = "Remove file"
                 >
-                  ✕
+                  ✕ Remove
                 </button>
               </div>
 
               {/* ── Stats grid ── */}
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
 
                 <div>
-                  <div className="inp-label" style={{ fontSize: 9 }}>ENTRIES</div>
-                  <div className="font-mono font-semibold text-text">
+                  <div style={{ fontFamily: 'Inter, sans-serif', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#6e7681', marginBottom: 4 }}>
+                    Entries
+                  </div>
+                  <div style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 600, fontSize: 14, color: '#e6edf3' }}>
                     {(f.entry_count || 0).toLocaleString()}
                   </div>
                 </div>
 
                 <div>
-                  <div className="inp-label" style={{ fontSize: 9 }}>PARSE RATE</div>
-                  <div className="font-mono font-semibold" style={{ color: rateColor }}>
-                    {f.parse_rate?.toFixed(1)}%
+                  <div style={{ fontFamily: 'Inter, sans-serif', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#6e7681', marginBottom: 4 }}>
+                    Parse Rate
+                  </div>
+                  <div style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 600, fontSize: 14, color: rateColor }}>
+                    {parseRate.toFixed(1)}%
+                  </div>
+                  <div style={{ marginTop: 4, height: 3, background: '#21262d', borderRadius: 2, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${parseRate}%`, background: rateColor, borderRadius: 2, transition: 'width .4s ease' }} />
                   </div>
                 </div>
 
                 <div>
-                  <div className="inp-label" style={{ fontSize: 9 }}>CONFIDENCE</div>
-                  <div className="font-mono font-semibold" style={{ color: confColor }}>
-                    {((f.confidence ?? f.detection_confidence) || 0).toFixed(1)}%
+                  <div style={{ fontFamily: 'Inter, sans-serif', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#6e7681', marginBottom: 4 }}>
+                    Confidence
+                  </div>
+                  <div style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 600, fontSize: 14, color: confColor }}>
+                    {confidence.toFixed(1)}%
+                  </div>
+                  <div style={{ marginTop: 4, height: 3, background: '#21262d', borderRadius: 2, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${confidence}%`, background: confColor, borderRadius: 2, transition: 'width .4s ease' }} />
                   </div>
                 </div>
 
                 <div>
-                  <div className="inp-label" style={{ fontSize: 9 }}>UNPARSED</div>
-                  <div className="font-mono font-semibold" style={{ color: hasUnparsed ? '#d29922' : '#3fb950' }}>
+                  <div style={{ fontFamily: 'Inter, sans-serif', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#6e7681', marginBottom: 4 }}>
+                    Unparsed
+                  </div>
+                  <div style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 600, fontSize: 14, color: hasUnparsed ? '#d29922' : '#3fb950' }}>
                     {hasUnparsed ? `⚠ ${(f.unparsed_count).toLocaleString()}` : '✓ 0'}
                   </div>
                 </div>
 
-                {f.time_range?.start && (
-                  <div className="col-span-2">
-                    <div className="inp-label" style={{ fontSize: 9 }}>TIME RANGE</div>
-                    <div className="font-mono text-muted" style={{ fontSize: 10 }}>
-                      {fmtTs(f.time_range.start)}
-                      <span className="text-accent mx-1">→</span>
-                      {fmtTs(f.time_range.end)}
-                    </div>
-                  </div>
-                )}
-
               </div>
+
+              {/* ── Time range ── */}
+              {f.time_range?.start && (
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #21262d' }}>
+                  <div style={{ fontFamily: 'Inter, sans-serif', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#6e7681', marginBottom: 4 }}>
+                    Time Range
+                  </div>
+                  <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 11, color: '#8b949e', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={{ color: '#39d3bb' }}>{fmtTs(f.time_range.start)}</span>
+                    <span style={{ color: '#f0a500' }}>→</span>
+                    <span style={{ color: '#39d3bb' }}>{fmtTs(f.time_range.end)}</span>
+                  </div>
+                </div>
+              )}
             </div>
           )
         })}

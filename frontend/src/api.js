@@ -1,17 +1,22 @@
 /**
- * api.js — centralised backend communication layer
+ * api.js — centralised backend communication layer — v3
  *
- * Every function here talks to the FastAPI backend.
- * The session UUID is generated once per browser and stored in
- * localStorage.  It is sent as X-Session-ID on every request so
- * the backend knows which session to use.
+ * All fetch() calls go through here.
+ * Session UUID generated once per browser, stored in localStorage,
+ * sent as X-Session-ID on every request.
  *
- * Swap BASE_URL to point at a different host/port if needed.
+ * Key change from v2:
+ *   search() now sends a `filters` dict instead of fixed
+ *   levels / components / threads fields.
+ *   e.g. filters: { "level": ["ERROR"], "component": ["GPS"] }
+ *
+ * New function:
+ *   generateFormat(sampleLines) -> calls POST /api/formats/generate
  */
 
 const BASE_URL = 'http://localhost:8000'
 
-// ── Session ID ────────────────────────────────────────────────
+// ── Session ID ────────────────────────────────────────────────────
 export function getSessionId() {
   let id = localStorage.getItem('log_search_session_id')
   if (!id) {
@@ -21,7 +26,7 @@ export function getSessionId() {
   return id
 }
 
-// ── Base fetch helpers ────────────────────────────────────────
+// ── Base fetch helpers ────────────────────────────────────────────
 function jsonHeaders() {
   return {
     'Content-Type': 'application/json',
@@ -30,6 +35,7 @@ function jsonHeaders() {
 }
 
 function fileHeaders() {
+  // No Content-Type — browser sets multipart boundary automatically
   return { 'X-Session-ID': getSessionId() }
 }
 
@@ -47,9 +53,7 @@ async function post(path, body) {
 }
 
 async function get(path) {
-  const res = await fetch(BASE_URL + path, {
-    headers: fileHeaders(),
-  })
+  const res = await fetch(BASE_URL + path, { headers: fileHeaders() })
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }))
     throw new Error(detail.detail || res.statusText)
@@ -72,7 +76,8 @@ async function del(path) {
 
 /**
  * Upload one or more File objects.
- * Returns { uploaded: [{file_id, filename, status, format, ...}] }
+ * Returns { uploaded: [{file_id, filename, status, format,
+ *                       field_definitions, time_range, ...}] }
  */
 export async function uploadFiles(fileList) {
   const form = new FormData()
@@ -80,7 +85,7 @@ export async function uploadFiles(fileList) {
 
   const res = await fetch(BASE_URL + '/api/files/upload', {
     method:  'POST',
-    headers: fileHeaders(),   // NO Content-Type — browser sets multipart boundary
+    headers: fileHeaders(),
     body:    form,
   })
   if (!res.ok) {
@@ -90,7 +95,7 @@ export async function uploadFiles(fileList) {
   return res.json()
 }
 
-/** Returns { files: [{file_id, filename, format, entry_count, ...}] } */
+/** Returns { files: [{file_id, filename, format, field_definitions, time_range, ...}] } */
 export async function listFiles() {
   return get('/api/files')
 }
@@ -105,9 +110,17 @@ export async function deleteFile(fileId) {
 // ================================================================
 
 /**
- * Fetch filter dropdown options for the selected files.
+ * Fetch field definitions and distinct values for the selected files.
  * fileIds: string[] | null (null = all files)
- * Returns { levels, components, thread_ids, available_fields }
+ *
+ * Returns:
+ *   {
+ *     field_definitions: [{name, type}, ...],
+ *     distinct_values:   { field_name: [value, ...], ... }
+ *   }
+ *
+ * The frontend uses distinct_values to build sidebar dropdowns dynamically.
+ * Every text/level/number field gets its own multiselect.
  */
 export async function getMetadata(fileIds) {
   const qs = fileIds && fileIds.length ? `?file_ids=${fileIds.join(',')}` : ''
@@ -119,7 +132,22 @@ export async function getMetadata(fileIds) {
 // ================================================================
 
 /**
- * Main search call.
+ * Main search call — fully dynamic filters.
+ *
+ * params shape:
+ *   {
+ *     file_ids:    string[] | null,
+ *     text:        string   | null,
+ *     filters:     { field_name: [allowed_values] } | null,
+ *     time_start:  string   | null,
+ *     time_end:    string   | null,
+ *     line_start:  number   | null,
+ *     line_end:    number   | null,
+ *     file_filter: string   | null,
+ *     page:        number,
+ *     page_size:   number,
+ *   }
+ *
  * Returns { matches, total, page, total_pages, summary }
  */
 export async function search(params) {
@@ -140,10 +168,7 @@ export async function getSummary(fileIds) {
 // EXPORT
 // ================================================================
 
-/**
- * Trigger a CSV download of all filtered results.
- * Uses a hidden <a> tag to trigger the browser save dialog.
- */
+/** Trigger a CSV download of all filtered results. */
 export async function exportCsv(params) {
   const res = await fetch(BASE_URL + '/api/export/csv', {
     method:  'POST',
@@ -181,19 +206,13 @@ export async function exportUnparsed(fileIds) {
 // LLM
 // ================================================================
 
-/**
- * Get token estimate without building the full CSV.
- * Returns { total_entries, est_tokens, est_size_kb }
- */
+/** Token estimate without building the full CSV. */
 export async function getContextInfo(fileIds) {
   const qs = fileIds && fileIds.length ? `?file_ids=${fileIds.join(',')}` : ''
   return get(`/api/llm/context-info${qs}`)
 }
 
-/**
- * Get the first 50 rows of the exact CSV that would be sent to Ollama.
- * Returns { csv: string, total: number }
- */
+/** First 50 rows of the exact CSV that would be sent to Ollama. */
 export async function getCsvPreview(params) {
   return post('/api/llm/csv-preview', params)
 }
@@ -201,11 +220,19 @@ export async function getCsvPreview(params) {
 /**
  * Stream an LLM chat response via Server-Sent Events.
  *
- * Reads the SSE stream from POST /api/llm/chat using fetch + ReadableStream.
- * Calls onToken(str)   for each token chunk.
- * Calls onDone()       when the model finishes naturally.
- * Calls onError(str)   on any network / model error.
- * Calls onStopped()    when the user aborts mid-stream (optional).
+ * params shape:
+ *   {
+ *     question: string,
+ *     file_ids: string[] | null,
+ *     filters:  SearchRequest | null,
+ *     history:  [{role, content}] | null,
+ *   }
+ *
+ * Callbacks:
+ *   onToken(str)    — called for each streamed token
+ *   onDone()        — called when the model finishes naturally
+ *   onError(str)    — called on any network / model error
+ *   onStopped()     — called when user aborts mid-stream (optional)
  *
  * @param {AbortSignal} [signal]    - Optional AbortSignal from an AbortController
  * @param {function}    [onStopped] - Called when aborted by the user
@@ -242,17 +269,17 @@ export async function streamLLMChat(params, onToken, onDone, onError, signal, on
 
       buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split('\n')
-      buffer = lines.pop()   // keep last incomplete line
+      buffer = lines.pop()   // keep last incomplete line for next iteration
 
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue
         try {
           const event = JSON.parse(line.slice(6))
-          if (event.type === 'token') onToken(event.content)
+          if (event.type === 'token')      onToken(event.content)
           else if (event.type === 'done')  onDone()
           else if (event.type === 'error') onError(event.content)
         } catch {
-          // malformed JSON chunk — skip
+          // malformed JSON chunk — skip silently
         }
       }
     }
@@ -261,7 +288,7 @@ export async function streamLLMChat(params, onToken, onDone, onError, signal, on
       reader.cancel()   // release the stream lock
       onStopped?.()
     } else {
-      onError(`Stream read error: ${err.message}`)
+      onError(`Stream error: ${err.message}`)
     }
   }
 }
@@ -273,6 +300,28 @@ export async function streamLLMChat(params, onToken, onDone, onError, signal, on
 /** List all log formats. */
 export async function listFormats() {
   return get('/api/formats')
+}
+
+/**
+ * Add a new log format.
+ * body: { name, description, pattern, fields: [{name, type}], example }
+ */
+export async function addFormat(body) {
+  return post('/api/formats', body)
+}
+
+/** Remove a format by name. */
+export async function deleteFormat(name) {
+  return del(`/api/formats/${encodeURIComponent(name)}`)
+}
+
+/**
+ * Ask the LLM to generate a format definition from sample lines.
+ * sampleLines: string[]
+ * Returns: { name, description, pattern, fields, example, match_rate, ... }
+ */
+export async function generateFormat(sampleLines) {
+  return post('/api/formats/generate', { sample_lines: sampleLines })
 }
 
 // ================================================================

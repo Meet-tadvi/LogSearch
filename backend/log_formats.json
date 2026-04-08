@@ -2,38 +2,30 @@
   "pis_railway": {
     "description": "Railway PIS system logs",
     "pattern": "(?P<timestamp>\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}:\\d{3})\\s*\\|(?P<component>[^:]+?)\\s*:\\s*(?P<file_path>[^:]+?):(?P<line_number>\\d+):\\(\\):(?P<level>\\w+):(?P<thread_id>\\d+):(?P<message>.+)",
-    "fields": ["timestamp", "component", "file_path", "line_number", "level", "thread_id", "message"],
-    "level_map": {},
-    "timestamp_format": "%Y-%m-%dT%H:%M:%S:%f",
+    "fields": [
+      { "name": "timestamp",   "type": "timestamp" },
+      { "name": "component",   "type": "text"      },
+      { "name": "file_path",   "type": "text"      },
+      { "name": "line_number", "type": "number"    },
+      { "name": "level",       "type": "level"     },
+      { "name": "thread_id",   "type": "text"      },
+      { "name": "message",     "type": "message"   }
+    ],
     "example": "2025-04-17T08:35:19:981 |XRAIL :  nvramserialiser.cpp:15:():INFO:1:Found NvRam."
   },
   "wdog_system": {
     "description": "WDOG watchdog system logs",
     "pattern": "(?P<timestamp>\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}\\.\\d{3})\\s+(?P<thread_id>[0-9a-fA-F]{8})\\s+(?P<component>\\S+)\\s+(?P<level>\\w{3})\\s+(?P<priority>p\\d+)\\s+(?P<file_path>[\\w.]+):(?P<line_number>\\d+)\\s+(?P<message>.+)",
-    "fields": ["timestamp", "thread_id", "component", "level", "priority", "file_path", "line_number", "message"],
-    "level_map": {
-      "Inf": "INFO",
-      "Err": "ERROR",
-      "Wrn": "WARNING",
-      "Dbg": "DEBUG"
-    },
-    "timestamp_format": "%d-%m %H:%M:%S.%f",
+    "fields": [
+      { "name": "timestamp",   "type": "timestamp" },
+      { "name": "thread_id",   "type": "text"      },
+      { "name": "component",   "type": "text"      },
+      { "name": "level",       "type": "level"     },
+      { "name": "priority",    "type": "text"      },
+      { "name": "file_path",   "type": "text"      },
+      { "name": "line_number", "type": "number"    },
+      { "name": "message",     "type": "message"   }
+    ],
     "example": "04-02 02:55:24.115 b72d6000  WDOG Inf p0 wdg_SystemAvai:0399 System available"
-  },
-  "streaming_server": {
-    "description": "Streaming Server Logs",
-    "pattern": "^\\\"(?P<timestamp>\\d{8}:\\d{6}\\.\\d{3})\\\"\\s*(?::\\s*)?(?:(?P<level>[A-Z]+)\\s*:)?\\s*(?P<message>.*)",
-    "fields": ["timestamp", "level", "message"],
-    "level_map": {},
-    "timestamp_format": "%d%m%Y:%H%M%S.%f",
-    "example": "\"24042025:152627.824\"  :INFO: Ready to Listen Incoming Message..."
-  },
-  "ccuc_video_playback": {
-    "description": "CCUC Video Playback Logs",
-    "pattern": "^(?P<file_name>[^,]+),(?P<timestamp>[A-Za-z]{3}\\s+[A-Za-z]{3}\\s+\\d{1,2}\\s+\\d{4},\\d{2}:\\d{2}:\\d{2}),(?P<duration>[^,]+),(?P<trip_code>[^,]+),(?P<origin_id>[^,]+),(?P<destination_id>[^,\\r\\n]+)",
-    "fields": ["file_name", "timestamp", "duration", "trip_code", "origin_id", "destination_id"],
-    "level_map": {},
-    "timestamp_format": "%a %b %d %Y,%H:%M:%S",
-    "example": "WMT_Test.h264,Tue Apr 22 2025,20:05:38,00:09.973,4A01,5451825,5452087"
   }
 }

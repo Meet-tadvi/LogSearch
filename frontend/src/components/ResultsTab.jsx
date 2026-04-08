@@ -1,74 +1,130 @@
 /**
- * ResultsTab.jsx
- * Fix 6: added line_number (source code line) column and extra_fields column
+ * ResultsTab.jsx — v4 (UI Redesign)
+ * Better pagination controls, pill-shaped level chips, improved summary bar.
  */
+
+const LEVEL_COLORS = {
+  INFO:     '#58a6ff',
+  INFO_:    '#58a6ff',
+  ERROR:    '#f85149',
+  ERR:      '#f85149',
+  WARNING:  '#d29922',
+  WARN:     '#d29922',
+  WRN:      '#d29922',
+  DEBUG:    '#3fb950',
+  DBG:      '#3fb950',
+  FATAL:    '#f85149',
+  CRITICAL: '#f85149',
+  CRIT:     '#f85149',
+  TRACE:    '#8b949e',
+  VERBOSE:  '#8b949e',
+  INF:      '#58a6ff',
+  Inf:      '#58a6ff',
+  Err:      '#f85149',
+  Wrn:      '#d29922',
+  Dbg:      '#3fb950',
+}
+
+function getLevelColor(val) {
+  if (!val) return null
+  return LEVEL_COLORS[val] || LEVEL_COLORS[val.toUpperCase()] || null
+}
 
 export default function ResultsTab({
   results, loading,
-  availableFields, isMultiFile, hasMixedFmt,
+  fieldDefinitions,
+  isMultiFile,
   page, pageSize,
   onPageChange, onExportCsv, onExportUnparsed, hasUnparsed,
 }) {
   if (!results && !loading) {
     return (
-      <div className="flex items-center justify-center h-full text-muted text-sm">
-        Select files and click ⚡ Apply Filters to see results.
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        height: 320,
+        gap: 12,
+        color: '#6e7681',
+      }}>
+        <div style={{ fontSize: 36, opacity: 0.4 }}>📊</div>
+        <div style={{ fontFamily: 'Inter, sans-serif', fontSize: 14 }}>No results yet</div>
+        <div style={{ fontFamily: 'Inter, sans-serif', fontSize: 12, color: '#484f58' }}>
+          Select files and click ⚡ Apply Filters to see results
+        </div>
       </div>
     )
   }
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full gap-3 text-muted text-sm">
-        <div className="spinner" /> Searching…
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 200, gap: 12, color: '#8b949e' }}>
+        <div className="spinner" />
+        <span style={{ fontFamily: 'Inter, sans-serif', fontSize: 14 }}>Searching through log entries…</span>
       </div>
     )
   }
 
   const { matches = [], total = 0, total_pages = 1, summary = {} } = results
-  const avail = new Set(availableFields)
-  const { levels = {}, components = {}, time_range = {}, line_range = {} } = summary
 
-  // Build columns dynamically based on available fields
   const cols = [
-    { key: 'actual_line_number', label: 'Line',       cls: 'col-line' },
-    { key: 'timestamp',          label: 'Timestamp',  cls: 'col-ts'   },
-    isMultiFile  && { key: 'source_file', label: 'Source File', cls: 'col-src' },
-    hasMixedFmt  && { key: 'format_name', label: 'Format',      cls: ''        },
-    avail.has('component')   && { key: 'component',   label: 'Component', cls: ''        },
-    avail.has('level')       && { key: 'level',        label: 'Level',     cls: ''        },
-    avail.has('thread_id')   && { key: 'thread_id',    label: 'Thread',    cls: ''        },
-    avail.has('file_path')   && { key: 'file_path',    label: 'Src File',  cls: ''        },
-    // Fix 6a: source code line number column
-    avail.has('line_number') && { key: 'line_number',  label: 'Src Line',  cls: 'col-line'},
-    { key: 'message',            label: 'Message',    cls: 'col-msg'  },
-    // Fix 6b: extra_fields column — shows format-specific fields (e.g. wdog priority)
-    { key: 'extra_fields',       label: 'Extra',      cls: 'text-muted' },
+    { key: 'line',   label: 'Line',   cls: 'col-line', special: 'line' },
+    isMultiFile && { key: 'source_file', label: 'Source File', cls: 'col-src', special: 'source' },
+    ...fieldDefinitions.map(fd => ({
+      key:     fd.name,
+      label:   fd.name.replace(/_/g, ' '),
+      cls:     fd.type === 'timestamp' ? 'col-ts'
+             : fd.type === 'message'   ? 'col-msg'
+             : '',
+      special: fd.type,
+      type:    fd.type,
+    })),
   ].filter(Boolean)
 
+  const { distributions = {}, time_range = {}, line_range = {} } = summary
+
   function renderCell(col, m) {
-    if (col.key === 'extra_fields') {
-      const ef = m.extra_fields || {}
-      const entries = Object.entries(ef)
-      if (!entries.length) return ''
-      return entries.map(([k, v]) => `${k}=${v}`).join(' | ')
+    if (col.special === 'line')   return m.actual_line_number
+    if (col.special === 'source') return m.source_file || ''
+
+    const val = (m.fields || {})[col.key] ?? ''
+
+    if (col.type === 'level') {
+      const color = getLevelColor(String(val))
+      if (color) {
+        return (
+          <span
+            className="chip"
+            style={{
+              color,
+              background:  color + '1a',
+              borderColor: color + '44',
+              fontSize: 10,
+              padding: '2px 8px',
+            }}
+          >
+            {val}
+          </span>
+        )
+      }
     }
-    if (col.key === 'level') {
-      return <span className={`chip chip-${m.level} text-xs`}>{m.level || ''}</span>
-    }
-    return String(m[col.key] ?? '')
+
+    return String(val)
   }
 
   return (
-    <div className="flex flex-col gap-3 h-full">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, height: '100%' }}>
 
-      {/* Match summary chips */}
+      {/* ── Summary chips bar ── */}
       {total > 0 && (
-        <div className="card flex flex-wrap gap-2 items-center py-2">
-          <span className="chip">🔢 {total.toLocaleString()} matches</span>
+        <div className="card" style={{ padding: '10px 14px', display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+          <span className="chip" style={{ fontWeight: 700 }}>
+            🔢 <strong>{total.toLocaleString()}</strong> matches
+          </span>
           {line_range.first != null && (
             <span className="chip chip-line">
-              📍 Lines {line_range.first} → {line_range.last}
+              📍 Lines {line_range.first.toLocaleString()} → {line_range.last.toLocaleString()}
             </span>
           )}
           {time_range.first && (
@@ -76,45 +132,78 @@ export default function ResultsTab({
               🕐 {(time_range.first || '').slice(0, 19)} → {(time_range.last || '').slice(0, 19)}
             </span>
           )}
-          {Object.entries(levels).map(([lvl, cnt]) => (
-            <span key={lvl} className={`chip chip-${lvl}`}>
-              {lvl}: {cnt.toLocaleString()}
-            </span>
-          ))}
-          {Object.entries(components).slice(0, 5).map(([c, cnt]) => (
-            <span key={c} className="chip">{c}: {cnt.toLocaleString()}</span>
-          ))}
+          {Object.entries(distributions).slice(0, 1).map(([fname, dist]) =>
+            fname.toLowerCase().includes('level') &&
+            Object.entries(dist).map(([val, cnt]) => {
+              const color = getLevelColor(val) || '#8b949e'
+              return (
+                <span
+                  key={`${fname}-${val}`}
+                  className="chip"
+                  style={{ color, background: color + '1a', borderColor: color + '44' }}
+                >
+                  {val}: <strong>{cnt.toLocaleString()}</strong>
+                </span>
+              )
+            })
+          )}
         </div>
       )}
 
       {total === 0 && (
-        <div className="card text-muted text-sm">No results match the current filters.</div>
+        <div className="card" style={{ color: '#8b949e', fontFamily: 'Inter, sans-serif', fontSize: 14 }}>
+          No results match the current filters.
+        </div>
       )}
 
-      {/* Pagination controls + download buttons */}
+      {/* ── Pagination + export ── */}
       {total > 0 && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <button className="btn" disabled={page === 0} onClick={() => onPageChange(page - 1)}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <button
+            className="btn"
+            style={{ fontSize: 13 }}
+            disabled={page === 0}
+            onClick={() => onPageChange(page - 1)}
+          >
             ◀ Prev
           </button>
 
-          <span className="text-muted text-xs">
-            Rows {(page * pageSize + 1).toLocaleString()}–
-            {Math.min((page + 1) * pageSize, total).toLocaleString()}
-            &nbsp;of&nbsp;{total.toLocaleString()}
-            &nbsp;·&nbsp;Page {page + 1} of {total_pages}
-          </span>
+          <div style={{
+            fontFamily: 'Inter, sans-serif',
+            fontSize: 12,
+            color: '#8b949e',
+            background: '#161b22',
+            border: '1px solid #21262d',
+            borderRadius: 7,
+            padding: '5px 12px',
+            display: 'flex',
+            gap: 4,
+            alignItems: 'center',
+          }}>
+            Rows <strong style={{ color: '#c9d1d9' }}>
+              {(page * pageSize + 1).toLocaleString()}–{Math.min((page + 1) * pageSize, total).toLocaleString()}
+            </strong>
+            &nbsp;of&nbsp;
+            <strong style={{ color: '#c9d1d9' }}>{total.toLocaleString()}</strong>
+            <span style={{ color: '#30363d', margin: '0 4px' }}>·</span>
+            Page <strong style={{ color: '#c9d1d9' }}>{page + 1}</strong> of {total_pages}
+          </div>
 
-          <button className="btn" disabled={page >= total_pages - 1} onClick={() => onPageChange(page + 1)}>
+          <button
+            className="btn"
+            style={{ fontSize: 13 }}
+            disabled={page >= total_pages - 1}
+            onClick={() => onPageChange(page + 1)}
+          >
             Next ▶
           </button>
 
-          <div className="ml-auto flex gap-2">
-            <button className="btn" onClick={onExportCsv}>
+          <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
+            <button className="btn" style={{ fontSize: 12 }} onClick={onExportCsv}>
               📥 CSV ({total.toLocaleString()} rows)
             </button>
             {hasUnparsed && (
-              <button className="btn" onClick={onExportUnparsed}>
+              <button className="btn" style={{ fontSize: 12, color: '#d29922', borderColor: 'rgba(210,153,34,0.35)' }} onClick={onExportUnparsed}>
                 ⚠ Unparsed CSV
               </button>
             )}
@@ -122,13 +211,15 @@ export default function ResultsTab({
         </div>
       )}
 
-      {/* Results table */}
+      {/* ── Results table ── */}
       {matches.length > 0 && (
-        <div className="flex-1 overflow-auto card p-0">
+        <div style={{ flex: 1, overflow: 'auto', borderRadius: 10, border: '1px solid #21262d', background: '#161b22' }}>
           <table className="log-table">
             <thead>
               <tr>
-                {cols.map(col => <th key={col.key}>{col.label}</th>)}
+                {cols.map(col => (
+                  <th key={col.key}>{col.label}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -148,7 +239,6 @@ export default function ResultsTab({
           </table>
         </div>
       )}
-
     </div>
   )
 }

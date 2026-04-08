@@ -1,45 +1,19 @@
 """
-FastAPI Backend — Log Search System v2
+FastAPI Backend — Log Search System v3
 =======================================
-Simple, clean REST API. All state lives in session_store (in-memory + JSON).
+Fully dynamic — no hardcoded field names in any endpoint.
+
+SearchRequest uses a generic `filters` dict instead of fixed
+levels / components / threads fields.
+
+New endpoints vs v2:
+    POST /api/formats/generate   LLM-assisted format generation
 
 Run (development):
     uvicorn main:app --reload --port 8000
 
 Run (production):
     uvicorn main:app --port 8000
-    Serves frontend/dist/ as static files at root.
-
-Session:
-    Frontend generates a UUID → stores in localStorage.
-    Every request sends it as  X-Session-ID  header.
-    Backend calls session_store.get_or_create(uuid).
-
-CORS:
-    Allows http://localhost:5173 in development (Vite dev server).
-    In production, same origin — CORS never fires.
-
-Endpoints:
-    POST   /api/files/upload          Upload + parse one or more files
-    GET    /api/files                 List files in this session
-    DELETE /api/files/{file_id}       Remove a file
-
-    GET    /api/metadata              Filter dropdown options
-    POST   /api/search                Paginated filtered search
-    GET    /api/summary               Full statistics
-
-    POST   /api/export/csv            Download filtered rows as CSV
-    POST   /api/export/unparsed       Download unparsed lines as CSV
-
-    POST   /api/llm/chat              SSE token streaming (Ollama)
-    GET    /api/llm/context-info      Token estimate without full CSV
-
-    GET    /api/formats               List all log formats
-    POST   /api/formats               Add a new format (validates regex)
-    DELETE /api/formats/{name}        Remove a format
-
-    DELETE /api/session               Wipe entire session
-    GET    /api/health                Health check
 """
 
 import csv
@@ -50,7 +24,7 @@ import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -63,6 +37,7 @@ from llm import (
     build_csv_from_matches,
     estimate_tokens,
     stream_ollama_response,
+    ask_ollama_for_format,
 )
 from log_parser import LogParser, get_raw_formats, save_formats
 from search_operations import SearchOperations
@@ -74,13 +49,13 @@ from search_operations import SearchOperations
 
 app = FastAPI(
     title       = 'Log Search API',
-    description = 'Multi-file log analysis — v2',
-    version     = '2.0.0',
+    description = 'Multi-file dynamic log analysis — v3',
+    version     = '3.0.0',
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins     = ['http://localhost:5173'],   # Vite dev server
+    allow_origins     = ['http://localhost:5173'],
     allow_credentials = True,
     allow_methods     = ['*'],
     allow_headers     = ['*'],
@@ -117,7 +92,7 @@ def get_session(x_session_id: Optional[str] = Header(default=None)):
     """
     Resolve or create the session for this request.
     Frontend sends X-Session-ID header on every request.
-    Auto-creates if missing (graceful fallback).
+    Auto-creates a new session if the header is missing.
     """
     if not x_session_id:
         x_session_id = str(uuid.uuid4())
@@ -129,75 +104,59 @@ def get_session(x_session_id: Optional[str] = Header(default=None)):
 # ================================================================
 
 class SearchRequest(BaseModel):
-    file_ids:    Optional[List[str]] = None   # None = all files
-    text:        Optional[str]       = None
-    levels:      Optional[List[str]] = None
-    components:  Optional[List[str]] = None
-    threads:     Optional[List[str]] = None
-    file_filter: Optional[str]       = None   # substring filter on file_path
-    time_start:  Optional[str]       = None
-    time_end:    Optional[str]       = None
-    line_start:  Optional[int]       = None
-    line_end:    Optional[int]       = None
-    page:        int                 = 0
-    page_size:   int                 = 500
+    file_ids:    Optional[List[str]]            = None
+    text:        Optional[str]                  = None
+    # Dynamic field filters: { field_name: [allowed_values] }
+    # e.g. {"level": ["INFO","ERROR"], "component": ["GPS","XRAIL"]}
+    filters:     Optional[Dict[str, List[str]]] = None
+    time_start:  Optional[str]                  = None
+    time_end:    Optional[str]                  = None
+    line_start:  Optional[int]                  = None
+    line_end:    Optional[int]                  = None
+    file_filter: Optional[str]                  = None   # substring on source_file
+    page:        int                            = 0
+    page_size:   int                            = 500
 
 
 class LLMRequest(BaseModel):
     question: str
-    file_ids: Optional[List[str]]    = None
+    file_ids: Optional[List[str]]     = None
     filters:  Optional[SearchRequest] = None
-    history:  Optional[List[dict]]   = None
+    history:  Optional[List[dict]]    = None
 
 
 class CsvPreviewRequest(BaseModel):
-    file_ids: Optional[List[str]]    = None
+    file_ids: Optional[List[str]]     = None
     filters:  Optional[SearchRequest] = None
 
 
 class AddFormatRequest(BaseModel):
-    name:             str
-    description:      str
-    pattern:          str
-    fields:           List[str]
-    level_map:        Optional[dict] = None
-    timestamp_format: Optional[str]  = None
-    example:          Optional[str]  = None
+    name:        str
+    description: str
+    pattern:     str
+    fields:      List[Dict]    # [{name, type}, ...]
+    example:     Optional[str] = None
+
+
+class FormatGenerateRequest(BaseModel):
+    sample_lines: List[str]
 
 
 # ================================================================
-# Helper — run filters on a SearchOperations instance
+# Filter helper
 # ================================================================
 
 def _apply_filters(ops: SearchOperations, req: SearchRequest) -> list:
-    """
-    Call find_combined() with the request's filter parameters.
-
-    source_file  → filters on log.file_path  (source code file, e.g. nvramserialiser.cpp)
-    uploaded_file→ filters on log.source_file (the uploaded log filename, e.g. system_A.log)
-
-    The sidebar's 'Source File' text box maps to uploaded_file so users can
-    narrow results to a specific uploaded file in multi-file mode.
-    """
-    matches = ops.find_combined(
-        search_string  = req.text        or None,
-        levels         = req.levels      or None,
-        components     = req.components  or None,
-        thread_ids     = req.threads     or None,
-        uploaded_file  = req.file_filter or None,   # filters on log.source_file
-        start_time     = req.time_start  or None,
-        end_time       = req.time_end    or None,
+    """Translate SearchRequest into a find_combined() call."""
+    return ops.find_combined(
+        text          = req.text        or None,
+        filters       = req.filters     or None,
+        start_time    = req.time_start  or None,
+        end_time      = req.time_end    or None,
+        line_start    = req.line_start,
+        line_end      = req.line_end,
+        uploaded_file = req.file_filter or None,
     )
-
-    # Line range post-filter
-    if req.line_start is not None or req.line_end is not None:
-        matches = [
-            m for m in matches
-            if (req.line_start is None or m['actual_line_number'] >= req.line_start)
-            and (req.line_end  is None or m['actual_line_number'] <= req.line_end)
-        ]
-
-    return matches
 
 
 # ================================================================
@@ -211,17 +170,8 @@ async def upload_files(
 ):
     """
     Upload and parse one or more log files.
-
-    Flow:
-        1. Read content + size check (≤200 MB)
-        2. Write to temp file (parser needs a real path)
-        3. Parse synchronously — takes 1–5 s per file
-        4. Tag every LogEntry with source_file = original filename
-        5. Register in session_store (saves JSON + builds index)
-        6. Return parse results immediately
-
-    No WebSocket progress — the frontend shows a spinner while the
-    POST is in flight.  Simple, zero extra complexity.
+    Returns parse results immediately (no WebSocket progress).
+    Each result includes field_definitions and time_range.
     """
     MAX_BYTES = 200 * 1024 * 1024
     results   = []
@@ -233,7 +183,7 @@ async def upload_files(
             results.append({
                 'filename': upload.filename,
                 'status':   'error',
-                'error':    f'File exceeds the 200 MB limit '
+                'error':    f'File exceeds 200 MB limit '
                             f'({len(content) // 1024 // 1024} MB).',
             })
             continue
@@ -247,41 +197,40 @@ async def upload_files(
             parser = LogParser()
             parser.parse_file(str(tmp_path))
 
-            metadata     = parser.get_log_metadata()
-            avail_fields = metadata.get('available_fields', [])
-            total_lines  = len(parser.parsed_logs) + len(parser.unparsed_lines)
-            parse_rate   = (
+            metadata          = parser.get_log_metadata()
+            field_definitions = metadata.get('field_definitions', [])
+            total_lines       = len(parser.parsed_logs) + len(parser.unparsed_lines)
+            parse_rate        = (
                 round(len(parser.parsed_logs) / total_lines * 100, 1)
                 if total_lines else 100.0
             )
-            # Fix 1: cap at 99.9 when unparsed lines exist — avoids misleading 100.0%
+            # Cap at 99.9 when unparsed lines exist — avoids misleading 100.0%
             if parser.unparsed_lines and parse_rate >= 100.0:
                 parse_rate = 99.9
 
-            # Fix 3: capture return value to get time_range for upload response
             file_data = store.register_file(
-                session_id   = session.session_id,
-                file_id      = file_id,
-                filename     = upload.filename,
-                entries      = parser.parsed_logs,
-                unparsed     = parser.unparsed_lines,
-                format_name  = parser.active_format or 'unknown',
-                parse_rate   = parse_rate,
-                confidence   = parser.detection_confidence,
-                avail_fields = avail_fields,
+                session_id        = session.session_id,
+                file_id           = file_id,
+                filename          = upload.filename,
+                entries           = parser.parsed_logs,
+                unparsed          = parser.unparsed_lines,
+                format_name       = parser.active_format or 'unknown',
+                parse_rate        = parse_rate,
+                confidence        = parser.detection_confidence,
+                field_definitions = field_definitions,
             )
 
             results.append({
-                'file_id':          file_id,
-                'filename':         upload.filename,
-                'status':           'ready',
-                'format':           parser.active_format,
-                'confidence':       parser.detection_confidence,
-                'parse_rate':       parse_rate,
-                'entry_count':      len(parser.parsed_logs),
-                'unparsed_count':   len(parser.unparsed_lines),
-                'available_fields': avail_fields,
-                'time_range':       file_data.time_range,
+                'file_id':           file_id,
+                'filename':          upload.filename,
+                'status':            'ready',
+                'format':            parser.active_format,
+                'confidence':        parser.detection_confidence,
+                'parse_rate':        parse_rate,
+                'entry_count':       len(parser.parsed_logs),
+                'unparsed_count':    len(parser.unparsed_lines),
+                'field_definitions': field_definitions,
+                'time_range':        file_data.time_range,
             })
 
         except Exception as e:
@@ -303,15 +252,15 @@ async def list_files(session = Depends(get_session)):
     return {
         'files': [
             {
-                'file_id':         f.file_id,
-                'filename':        f.filename,
-                'format':          f.format_name,
-                'confidence':      f.detection_confidence,
-                'parse_rate':      f.parse_rate,
-                'entry_count':     f.entry_count,
-                'unparsed_count':  f.unparsed_count,
-                'available_fields': f.available_fields,
-                'time_range':      f.time_range,
+                'file_id':           f.file_id,
+                'filename':          f.filename,
+                'format':            f.format_name,
+                'confidence':        f.detection_confidence,
+                'parse_rate':        f.parse_rate,
+                'entry_count':       f.entry_count,
+                'unparsed_count':    f.unparsed_count,
+                'field_definitions': f.field_definitions,
+                'time_range':        f.time_range,
             }
             for f in session.files.values()
         ]
@@ -320,7 +269,7 @@ async def list_files(session = Depends(get_session)):
 
 @app.delete('/api/files/{file_id}')
 async def delete_file(file_id: str, session = Depends(get_session)):
-    """Remove a file from the session (memory + JSON files)."""
+    """Remove a file from the session (memory + disk)."""
     if file_id not in session.files:
         raise HTTPException(status_code=404, detail='File not found in this session.')
     filename = session.files[file_id].filename
@@ -334,30 +283,25 @@ async def delete_file(file_id: str, session = Depends(get_session)):
 
 @app.get('/api/metadata')
 async def get_metadata(
-    file_ids: Optional[str] = None,   # comma-separated file_id list
+    file_ids: Optional[str] = None,
     session = Depends(get_session),
 ):
     """
-    Return filter dropdown options (levels, components, threads)
-    for the selected files.
+    Return field_definitions and distinct values for all
+    text / level / number fields across the selected files.
+
+    The frontend uses this to build sidebar filter dropdowns dynamically.
+    Every text/level/number field gets its own multiselect dropdown.
     """
     ids = file_ids.split(',') if file_ids else None
     ops = store.get_combined_ops(session, ids)
 
     if not ops:
-        return {
-            'levels': [], 'components': [], 'thread_ids': [],
-            'available_fields': [],
-        }
+        return {'field_definitions': [], 'distinct_values': {}}
 
     return {
-        'levels':           sorted(set(
-                                l.level     for l in ops.logs if l.level)),
-        'components':       sorted(set(
-                                l.component for l in ops.logs if l.component)),
-        'thread_ids':       sorted(set(
-                                l.thread_id for l in ops.logs if l.thread_id)),
-        'available_fields': list(ops.available_fields),
+        'field_definitions': ops.field_definitions,
+        'distinct_values':   ops.get_distinct_values(),
     }
 
 
@@ -368,10 +312,8 @@ async def get_metadata(
 @app.post('/api/search')
 async def search(req: SearchRequest, session = Depends(get_session)):
     """
-    Main filter query.
-
-    Returns the current page of matches plus aggregate summary stats.
-    The frontend uses summary to render the chips above the results table.
+    Main filter query. Returns paginated results + aggregate summary stats.
+    The frontend uses summary to render chips above the results table.
     """
     ids = req.file_ids or None
     ops = store.get_combined_ops(session, ids)
@@ -379,8 +321,7 @@ async def search(req: SearchRequest, session = Depends(get_session)):
     if not ops:
         return {
             'matches': [], 'total': 0,
-            'page': 0, 'total_pages': 1,
-            'summary': {},
+            'page': 0, 'total_pages': 1, 'summary': {},
         }
 
     all_matches = _apply_filters(ops, req)
@@ -408,7 +349,7 @@ async def get_summary(
     file_ids: Optional[str] = None,
     session = Depends(get_session),
 ):
-    """Full statistics for the selected files."""
+    """Full statistics for selected files."""
     ids = file_ids.split(',') if file_ids else None
     ops = store.get_combined_ops(session, ids)
     if not ops:
@@ -429,14 +370,12 @@ async def export_csv(req: SearchRequest, session = Depends(get_session)):
         raise HTTPException(status_code=404, detail='No files selected.')
 
     all_matches = _apply_filters(ops, req)
-    csv_data    = build_csv_from_matches(all_matches, list(ops.available_fields))
+    csv_data    = build_csv_from_matches(all_matches, ops.field_definitions)
 
     return StreamingResponse(
         iter([csv_data]),
         media_type = 'text/csv',
-        headers    = {
-            'Content-Disposition': 'attachment; filename="filtered_logs.csv"'
-        },
+        headers    = {'Content-Disposition': 'attachment; filename="filtered_logs.csv"'},
     )
 
 
@@ -451,7 +390,7 @@ async def export_unparsed(
     buf    = io.StringIO()
     writer = csv.DictWriter(
         buf,
-        fieldnames = ['source_file', 'line_number', 'content'],
+        fieldnames   = ['source_file', 'line_number', 'content'],
         extrasaction = 'ignore',
     )
     writer.writeheader()
@@ -460,9 +399,7 @@ async def export_unparsed(
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type = 'text/csv',
-        headers    = {
-            'Content-Disposition': 'attachment; filename="unparsed_lines.csv"'
-        },
+        headers    = {'Content-Disposition': 'attachment; filename="unparsed_lines.csv"'},
     )
 
 
@@ -476,60 +413,46 @@ async def llm_chat(req: LLMRequest, request: Request, session = Depends(get_sess
     Send a natural language question about the filtered log data.
     Returns a Server-Sent Events stream of tokens.
 
-    SSE events:
-        data: {"type": "token",  "content": "Hello"}
-        data: {"type": "done",   "content": ""}
-        data: {"type": "error",  "content": "Error message"}
-
-    The full filtered dataset (as CSV) is sent to Ollama with every
-    request — no sampling, no truncation.
-
-    request.is_disconnected() is polled between each yielded chunk so
-    that when the user clicks Stop (AbortController on the frontend),
-    the backend stops sending immediately and avoids the
-    'socket.send() raised exception' log spam.
+    request.is_disconnected() is checked between each yielded chunk so
+    that when the user clicks Stop, the backend stops sending immediately
+    (no socket.send() spam in logs, Ollama stream closed cleanly).
     """
-    filters = req.filters or SearchRequest()
-    ids     = req.file_ids or None
-    ops     = store.get_combined_ops(session, ids)
+    filters_req = req.filters or SearchRequest()
+    ids         = req.file_ids or None
+    ops         = store.get_combined_ops(session, ids)
 
-    async def _error_stream(msg: str):
+    async def _err(msg: str):
         yield f'data: {json.dumps({"type": "error", "content": msg})}\n\n'
 
     if not ops:
-        return StreamingResponse(
-            _error_stream('No files selected.'),
-            media_type = 'text/event-stream',
-        )
+        return StreamingResponse(_err('No files selected.'),
+                                 media_type='text/event-stream')
 
-    all_matches = _apply_filters(ops, filters)
-
+    all_matches = _apply_filters(ops, filters_req)
     if not all_matches:
         return StreamingResponse(
-            _error_stream(
-                'No data matches the current filters. '
-                'Select files and apply filters before using the LLM.'
-            ),
-            media_type = 'text/event-stream',
+            _err('No data matches the current filters. '
+                 'Select files and apply filters before using the LLM.'),
+            media_type='text/event-stream',
         )
 
     summary  = ops.build_match_summary(all_matches)
-    csv_data = build_csv_from_matches(all_matches, list(ops.available_fields))
+    csv_data = build_csv_from_matches(all_matches, ops.field_definitions)
     history  = req.history or []
 
     async def _stream_with_disconnect_check():
-        """Thin wrapper: stop yielding the moment the client disconnects."""
+        """Stop yielding the moment the client disconnects (Stop button)."""
         async for chunk in stream_ollama_response(req.question, csv_data, summary, history):
             if await request.is_disconnected():
-                break          # client gone — stop sending, no more socket errors
+                break          # client gone — stop sending, no socket errors
             yield chunk
 
     return StreamingResponse(
         _stream_with_disconnect_check(),
         media_type = 'text/event-stream',
         headers    = {
-            'Cache-Control':    'no-cache',
-            'X-Accel-Buffering': 'no',   # disable nginx buffering
+            'Cache-Control':     'no-cache',
+            'X-Accel-Buffering': 'no',
         },
     )
 
@@ -537,18 +460,16 @@ async def llm_chat(req: LLMRequest, request: Request, session = Depends(get_sess
 @app.post('/api/llm/csv-preview')
 async def llm_csv_preview(req: CsvPreviewRequest, session = Depends(get_session)):
     """
-    Return the first 50 rows of the EXACT CSV that would be sent to Ollama.
-    Used by the LLM panel 'Preview data' button so users see the real payload.
+    Return the first 50 rows of the exact CSV that would be sent to Ollama.
+    Powers the 'Preview data' button in the LLM panel.
     """
-    filters = req.filters or SearchRequest()
-    ids     = req.file_ids or None
-    ops     = store.get_combined_ops(session, ids)
-
+    filters_req = req.filters or SearchRequest()
+    ids         = req.file_ids or None
+    ops         = store.get_combined_ops(session, ids)
     if not ops:
         return {'csv': '', 'total': 0}
-
-    all_matches = _apply_filters(ops, filters)
-    preview     = build_csv_from_matches(all_matches[:50], list(ops.available_fields))
+    all_matches = _apply_filters(ops, filters_req)
+    preview     = build_csv_from_matches(all_matches[:50], ops.field_definitions)
     return {'csv': preview, 'total': len(all_matches)}
 
 
@@ -557,15 +478,10 @@ async def llm_context_info(
     file_ids: Optional[str] = None,
     session = Depends(get_session),
 ):
-    """
-    Return a token estimate for the current filter without building the CSV.
-    Used by the LLM tab to show the token count before the user asks anything.
-    Estimate: ~80 chars per log row on average, 4 chars per token.
-    """
+    """Token estimate without building the full CSV."""
     ids   = file_ids.split(',') if file_ids else None
     ops   = store.get_combined_ops(session, ids)
     total = len(ops.logs) if ops else 0
-
     return {
         'total_entries': total,
         'est_tokens':    (total * 80) // 4,
@@ -581,51 +497,45 @@ async def llm_context_info(
 async def list_formats():
     """List all log formats from log_formats.json."""
     raw = get_raw_formats(FORMATS_PATH)
-    return {
-        'formats': {
-            name: {
-                'description':      cfg.get('description', ''),
-                'fields':           cfg.get('fields', []),
-                'level_map':        cfg.get('level_map', {}),
-                'timestamp_format': cfg.get('timestamp_format', ''),
-                'example':          cfg.get('example', ''),
-            }
-            for name, cfg in raw.items()
-        }
-    }
+    return {'formats': raw}
 
 
 @app.post('/api/formats')
 async def add_format(req: AddFormatRequest):
     """
     Add a new log format.
-    Validates the regex (must compile + must have timestamp and message groups).
+    Validates: regex compiles, has message group, all field names in pattern.
     Saves to log_formats.json — no server restart needed.
     """
-    # Validate regex compiles
     try:
         compiled = re.compile(req.pattern)
     except re.error as e:
         raise HTTPException(status_code=422, detail=f'Invalid regex: {e}')
 
-    # Validate required named groups
-    named  = set(compiled.groupindex.keys())
-    needed = {'timestamp', 'message'}
-    missing = needed - named
-    if missing:
+    named = set(compiled.groupindex.keys())
+
+    # message group is mandatory
+    if 'message' not in named:
         raise HTTPException(
-            status_code = 422,
-            detail      = f"Pattern must include named groups: {', '.join(missing)}",
+            status_code=422,
+            detail="Pattern must include a (?P<message>...) named group.",
         )
 
-    raw          = get_raw_formats(FORMATS_PATH)
+    # All declared field names must be captured by the pattern
+    field_names = {f['name'] for f in req.fields}
+    undefined   = field_names - named
+    if undefined:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Fields {sorted(undefined)} are not named groups in the pattern.",
+        )
+
+    raw           = get_raw_formats(FORMATS_PATH)
     raw[req.name] = {
-        'description':      req.description,
-        'pattern':          req.pattern,
-        'fields':           req.fields,
-        'level_map':        req.level_map or {},
-        'timestamp_format': req.timestamp_format or '',
-        'example':          req.example or '',
+        'description': req.description,
+        'pattern':     req.pattern,
+        'fields':      req.fields,
+        'example':     req.example or '',
     }
     save_formats(raw, FORMATS_PATH)
     return {'added': req.name, 'total_formats': len(raw)}
@@ -640,6 +550,24 @@ async def delete_format(name: str):
     del raw[name]
     save_formats(raw, FORMATS_PATH)
     return {'deleted': name, 'total_formats': len(raw)}
+
+
+@app.post('/api/formats/generate')
+async def generate_format(req: FormatGenerateRequest):
+    """
+    Send sample lines to Ollama — returns a complete format definition
+    ready to pre-fill the add-format form in the UI.
+    """
+    if len(req.sample_lines) < 2:
+        raise HTTPException(
+            status_code=422,
+            detail='Please provide at least 2 sample log lines.',
+        )
+    try:
+        result = await ask_ollama_for_format(req.sample_lines)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ================================================================

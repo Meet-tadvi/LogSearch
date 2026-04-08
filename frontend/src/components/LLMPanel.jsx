@@ -1,10 +1,6 @@
 /**
- * LLMPanel.jsx
- *
- * Fix 2: token estimate computed from filtered totalEntries prop (not getContextInfo
- *        which returns total entries, not filtered entries)
- * Fix 5: history + onHistoryChange received as props (state lives in App.jsx)
- *        so chat history survives tab switches
+ * LLMPanel.jsx — v4 (UI Redesign)
+ * Better chat bubbles, polished input area, improved context bar.
  */
 
 import { useState, useRef, useEffect } from 'react'
@@ -22,24 +18,63 @@ function tokenColor(n) {
 function MessageBubble({ role, content }) {
   const isUser = role === 'user'
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-3`}>
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: isUser ? 'flex-end' : 'flex-start',
+        marginBottom: 10,
+      }}
+    >
+      {!isUser && (
+        <div style={{
+          width: 28, height: 28,
+          borderRadius: 8,
+          background: 'linear-gradient(135deg, #1c2333, #21262d)',
+          border: '1px solid #30363d',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 14,
+          flexShrink: 0,
+          marginRight: 10,
+          marginTop: 2,
+        }}>🤖</div>
+      )}
       <div
-        className="rounded-lg px-3 py-2 max-w-[85%] text-xs font-mono whitespace-pre-wrap leading-relaxed"
-        style={{
-          background: isUser ? 'rgba(240,165,0,.15)' : '#161b22',
-          border:     `1px solid ${isUser ? 'rgba(240,165,0,.4)' : '#30363d'}`,
-          color:      '#e6edf3',
-        }}
+        className={isUser ? 'msg-user' : 'msg-assistant'}
+        style={{ maxWidth: '85%' }}
       >
         {content}
       </div>
+      {isUser && (
+        <div style={{
+          width: 28, height: 28,
+          borderRadius: 8,
+          background: 'rgba(240,165,0,0.15)',
+          border: '1px solid rgba(240,165,0,0.3)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 14,
+          flexShrink: 0,
+          marginLeft: 10,
+          marginTop: 2,
+        }}>👤</div>
+      )}
     </div>
   )
 }
 
+const EXAMPLE_QUESTIONS = [
+  'What caused the errors?',
+  'Which component has the most warnings?',
+  'Summarise the activity in this time range.',
+  'Are there any patterns in the error messages?',
+]
+
 export default function LLMPanel({
-  selectedIds, appliedFilters, availableFields, totalEntries,
-  history, onHistoryChange,   // Fix 5: from App.jsx state
+  selectedIds, appliedFilters, fieldDefinitions, totalEntries,
+  history, onHistoryChange,
 }) {
   const [streaming,   setStreaming]   = useState(false)
   const [streamBuf,   setStreamBuf]   = useState('')
@@ -47,17 +82,28 @@ export default function LLMPanel({
   const [showPreview, setShowPreview] = useState(false)
   const [previewCsv,  setPreviewCsv]  = useState('')
   const bottomRef          = useRef(null)
-  const abortControllerRef = useRef(null)  // holds the AbortController for the active request
+  const abortControllerRef = useRef(null)
+  const inputRef           = useRef(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [history, streamBuf])
 
-  // Fix 2: compute token estimate directly from filtered totalEntries prop.
-  // getContextInfo returns TOTAL entries (unfiltered) — wrong for filtered context.
-  // 80 chars/row average, 4 chars/token — same formula as backend.
   const estTokens = Math.round(totalEntries * 80 / 4)
   const estKb     = Math.round(totalEntries * 80 / 1024)
+
+  function buildFiltersReq() {
+    return {
+      text:        appliedFilters.text        || null,
+      filters:     Object.keys(appliedFilters.filters || {}).length
+                     ? appliedFilters.filters : null,
+      file_filter: appliedFilters.file_filter || null,
+      time_start:  appliedFilters.time_start  || null,
+      time_end:    appliedFilters.time_end    || null,
+      line_start:  appliedFilters.line_start  ? parseInt(appliedFilters.line_start) : null,
+      line_end:    appliedFilters.line_end    ? parseInt(appliedFilters.line_end)   : null,
+    }
+  }
 
   async function handleSend() {
     if (!question.trim() || streaming) return
@@ -69,7 +115,6 @@ export default function LLMPanel({
     setStreaming(true)
     setStreamBuf('')
 
-    // Fresh AbortController for this request
     const controller = new AbortController()
     abortControllerRef.current = controller
 
@@ -79,35 +124,22 @@ export default function LLMPanel({
       {
         question: q,
         file_ids: selectedIds.length ? selectedIds : null,
-        filters: {
-          text:        appliedFilters.text        || null,
-          levels:      appliedFilters.levels.length      ? appliedFilters.levels      : null,
-          components:  appliedFilters.components.length  ? appliedFilters.components  : null,
-          threads:     appliedFilters.threads.length     ? appliedFilters.threads     : null,
-          file_filter: appliedFilters.file_filter || null,
-          time_start:  appliedFilters.time_start  || null,
-          time_end:    appliedFilters.time_end    || null,
-          line_start:  appliedFilters.line_start  ? parseInt(appliedFilters.line_start) : null,
-          line_end:    appliedFilters.line_end    ? parseInt(appliedFilters.line_end)   : null,
-        },
-        history: newHistory.slice(0, -1),
+        filters:  buildFiltersReq(),
+        history:  newHistory.slice(0, -1),
       },
       (token) => { fullResponse += token; setStreamBuf(fullResponse) },
       () => {
-        // Natural completion
         abortControllerRef.current = null
         onHistoryChange([...newHistory, { role: 'assistant', content: fullResponse }])
         setStreamBuf(''); setStreaming(false)
       },
       (err) => {
-        // Error from Ollama / network
         abortControllerRef.current = null
         onHistoryChange([...newHistory, { role: 'assistant', content: `⚠️ ${err}` }])
         setStreamBuf(''); setStreaming(false)
       },
-      controller.signal,   // AbortSignal ← passed to fetch()
+      controller.signal,
       () => {
-        // User clicked Stop — save whatever arrived so far
         abortControllerRef.current = null
         const saved = fullResponse
           ? fullResponse + '\n\n⏹️ _Stopped by user._'
@@ -127,17 +159,7 @@ export default function LLMPanel({
     try {
       const data = await api.getCsvPreview({
         file_ids: selectedIds.length ? selectedIds : null,
-        filters: {
-          text:        appliedFilters.text        || null,
-          levels:      appliedFilters.levels.length      ? appliedFilters.levels      : null,
-          components:  appliedFilters.components.length  ? appliedFilters.components  : null,
-          threads:     appliedFilters.threads.length     ? appliedFilters.threads     : null,
-          file_filter: appliedFilters.file_filter || null,
-          time_start:  appliedFilters.time_start  || null,
-          time_end:    appliedFilters.time_end    || null,
-          line_start:  appliedFilters.line_start  ? parseInt(appliedFilters.line_start) : null,
-          line_end:    appliedFilters.line_end    ? parseInt(appliedFilters.line_end)   : null,
-        },
+        filters:  buildFiltersReq(),
       })
       setPreviewCsv(data.csv || 'No data.')
     } catch (e) {
@@ -146,25 +168,50 @@ export default function LLMPanel({
   }
 
   if (!selectedIds.length) {
-    return <div className="text-muted text-sm">Select files to use the LLM panel.</div>
+    return (
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        height: 320,
+        gap: 12,
+        color: '#6e7681',
+      }}>
+        <div style={{ fontSize: 36, opacity: 0.4 }}>🤖</div>
+        <div style={{ fontFamily: 'Inter, sans-serif', fontSize: 14 }}>Select files to use the LLM panel</div>
+      </div>
+    )
   }
 
   return (
-    <div className="flex flex-col h-full w-full gap-3">
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', gap: 12 }}>
 
-      {/* Context info bar */}
-      <div className="card card-accent flex flex-wrap items-center gap-3">
-        <span className="font-mono font-bold text-xs text-accent">// llm_chat</span>
-        <span className="text-muted text-xs">
-          📊 <span className="text-text font-semibold">{totalEntries.toLocaleString()}</span> entries
-          &nbsp;·&nbsp; ~<span className="text-text font-semibold">{estKb.toLocaleString()} KB</span>
-          &nbsp;·&nbsp; ~<span style={{ color: tokenColor(estTokens) }} className="font-semibold">
-            {estTokens.toLocaleString()} tokens
-          </span>
-        </span>
+      {/* ── Context info bar ── */}
+      <div className="card card-accent" style={{ padding: '10px 16px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <div style={{ fontFamily: 'Inter, sans-serif', fontWeight: 700, fontSize: 12, color: '#f0a500', textTransform: 'uppercase', letterSpacing: '.06em' }}>
+            LLM Context
+          </div>
+          <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 12, color: '#8b949e', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <span>
+              📊 <span style={{ color: '#e6edf3', fontWeight: 600 }}>{totalEntries.toLocaleString()}</span> entries
+            </span>
+            <span style={{ color: '#30363d' }}>·</span>
+            <span>
+              ~<span style={{ color: '#e6edf3', fontWeight: 600 }}>{estKb.toLocaleString()} KB</span>
+            </span>
+            <span style={{ color: '#30363d' }}>·</span>
+            <span>
+              ~<span style={{ color: tokenColor(estTokens), fontWeight: 600 }}>
+                {estTokens.toLocaleString()} tokens
+              </span>
+            </span>
+          </div>
+        </div>
 
         {estTokens > WARN_TOKENS && (
-          <span className="chip" style={{ color: tokenColor(estTokens) }}>
+          <span className="chip" style={{ color: tokenColor(estTokens), background: tokenColor(estTokens) + '1a', borderColor: tokenColor(estTokens) + '44' }}>
             {estTokens > ERROR_TOKENS
               ? '❌ Exceeds context limit — narrow filters'
               : '⚠ Large context — model may degrade'}
@@ -172,42 +219,82 @@ export default function LLMPanel({
         )}
 
         <button
-          className="btn text-xs ml-auto"
-          onClick={() => { if (!showPreview) handleLoadPreview(); setShowPreview(v => !v) }}
+          className="btn"
+          style={{ marginLeft: 'auto', fontSize: 12 }}
+          onClick={() => {
+            if (!showPreview) handleLoadPreview()
+            setShowPreview(v => !v)
+          }}
         >
           🔍 {showPreview ? 'Hide' : 'Preview'} data
         </button>
       </div>
 
-      {/* CSV preview */}
+      {/* ── CSV preview ── */}
       {showPreview && (
-        <div className="card p-0 overflow-hidden">
-          <div className="px-3 py-2 border-b border-border text-muted text-xs">
-            First 50 rows of data sent to LLM (CSV)
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div style={{
+            padding: '8px 14px',
+            borderBottom: '1px solid #21262d',
+            fontFamily: 'Inter, sans-serif',
+            fontSize: 12,
+            color: '#6e7681',
+            background: '#1c2333',
+          }}>
+            First 50 rows of data sent to LLM (CSV format)
           </div>
-          <pre className="p-3 text-xs text-muted overflow-auto max-h-48 font-mono leading-relaxed">
+          <pre style={{
+            padding: 14,
+            fontFamily: 'JetBrains Mono, monospace',
+            fontSize: 11,
+            color: '#8b949e',
+            overflow: 'auto',
+            maxHeight: 200,
+            margin: 0,
+            lineHeight: 1.6,
+          }}>
             {previewCsv || 'Loading…'}
           </pre>
         </div>
       )}
 
-      {/* Chat history */}
-      <div className="flex-1 overflow-auto flex flex-col min-h-0">
+      {/* ── Chat history ── */}
+      <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column', minHeight: 0, padding: '4px 0' }}>
         {history.length === 0 && !streaming && (
-          <div className="text-muted text-xs text-center mt-8">
-            <div className="text-2xl mb-2">🤖</div>
-            Ask anything about the {totalEntries.toLocaleString()} filtered log entries.
-            <div className="mt-3 flex flex-col gap-1">
-              {[
-                'What caused the errors?',
-                'Which component has the most warnings?',
-                'Summarise the activity between 08:35 and 08:45.',
-                'Are there any patterns in the error messages?',
-              ].map((ex, i) => (
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100%',
+            gap: 16,
+            color: '#6e7681',
+            textAlign: 'center',
+          }}>
+            <div style={{ fontSize: 40 }}>🤖</div>
+            <div style={{ fontFamily: 'Inter, sans-serif', fontSize: 14, color: '#8b949e' }}>
+              Ask anything about the{' '}
+              <strong style={{ color: '#e6edf3' }}>{totalEntries.toLocaleString()}</strong>{' '}
+              filtered log entries
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+              {EXAMPLE_QUESTIONS.map((ex, i) => (
                 <button
                   key={i}
-                  className="text-accent/70 hover:text-accent text-xs underline"
-                  onClick={() => setQuestion(ex)}
+                  style={{
+                    background: 'rgba(240,165,0,0.08)',
+                    border: '1px solid rgba(240,165,0,0.2)',
+                    borderRadius: 8,
+                    padding: '8px 16px',
+                    fontFamily: 'Inter, sans-serif',
+                    fontSize: 13,
+                    color: '#c9a14a',
+                    cursor: 'pointer',
+                    transition: 'all .18s',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(240,165,0,0.14)'; e.currentTarget.style.color = '#f0a500' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(240,165,0,0.08)'; e.currentTarget.style.color = '#c9a14a' }}
+                  onClick={() => { setQuestion(ex); inputRef.current?.focus() }}
                 >
                   {ex}
                 </button>
@@ -221,63 +308,91 @@ export default function LLMPanel({
         ))}
 
         {streaming && streamBuf && (
-          <MessageBubble role="assistant" content={streamBuf + '▌'} />
+          <MessageBubble
+            role="assistant"
+            content={streamBuf}
+          />
         )}
         {streaming && !streamBuf && (
-          <div className="flex justify-start mb-3">
-            <div className="card flex items-center gap-2 text-xs text-muted">
-              <div className="spinner" /> Thinking…
+          <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 10, alignItems: 'center', gap: 10 }}>
+            <div style={{
+              width: 28, height: 28,
+              borderRadius: 8,
+              background: 'linear-gradient(135deg, #1c2333, #21262d)',
+              border: '1px solid #30363d',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 14,
+            }}>🤖</div>
+            <div className="card" style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '10px 16px',
+              fontFamily: 'Inter, sans-serif',
+              fontSize: 13,
+              color: '#8b949e',
+            }}>
+              <div className="spinner" />
+              Thinking…
             </div>
           </div>
         )}
-
         <div ref={bottomRef} />
       </div>
 
-      {/* Input row */}
-      <div className="flex gap-2 border-t border-border pt-3">
+      {/* ── Input row ── */}
+      <div style={{
+        display: 'flex',
+        gap: 8,
+        borderTop: '1px solid #21262d',
+        paddingTop: 12,
+        alignItems: 'flex-end',
+      }}>
         <input
-          className   = "inp flex-1"
+          ref         = {inputRef}
+          className   = "inp"
+          style       = {{ flex: 1, fontSize: 14, padding: '10px 14px' }}
           placeholder = {`Ask about ${totalEntries.toLocaleString()} log entries…`}
           value       = {question}
           onChange    = {e => setQuestion(e.target.value)}
           onKeyDown   = {e => e.key === 'Enter' && !e.shiftKey && handleSend()}
           disabled    = {streaming}
         />
-
         {streaming ? (
-          /* Stop button — visible only while generating */
           <button
             id        = "llm-stop-btn"
-            className = "btn flex-shrink-0"
+            className = "btn"
             onClick   = {handleStop}
             title     = "Stop generating"
             style={{
-              background: 'rgba(248,81,73,.15)',
-              border:     '1px solid rgba(248,81,73,.5)',
-              color:      '#f85149',
-              fontWeight: 600,
+              background:  'rgba(248,81,73,0.12)',
+              border:      '1px solid rgba(248,81,73,0.40)',
+              color:       '#ff7b72',
+              fontWeight:  700,
+              padding:     '10px 16px',
+              flexShrink:  0,
             }}
           >
-            ⏹️ Stop
+            ⏹ Stop
           </button>
         ) : (
           <button
             id        = "llm-send-btn"
-            className = "btn btn-primary flex-shrink-0"
+            className = "btn btn-primary"
             onClick   = {handleSend}
             disabled  = {!question.trim()}
+            style     = {{ padding: '10px 18px', flexShrink: 0 }}
           >
             Send ↵
           </button>
         )}
-
         {history.length > 0 && (
           <button
-            className = "btn flex-shrink-0"
+            className = "btn btn-ghost"
             onClick   = {() => { onHistoryChange([]); setStreamBuf('') }}
             disabled  = {streaming}
             title     = "Clear chat history"
+            style     = {{ padding: '10px 12px', flexShrink: 0 }}
           >
             🗑
           </button>

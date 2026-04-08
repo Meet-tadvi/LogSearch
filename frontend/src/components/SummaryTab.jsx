@@ -1,43 +1,98 @@
 /**
- * SummaryTab.jsx — full statistics for selected files
+ * SummaryTab.jsx — v4 (UI Redesign)
+ * Large stat cards, colored severity, improved distribution tables.
  */
 
-function StatCard({ label, value, sub, color = '#f0a500' }) {
+function StatCard({ label, value, color = '#f0a500', icon, subtext }) {
   return (
-    <div className="card text-center">
-      <div className="inp-label">{label}</div>
-      <div className="font-mono font-bold text-sm mt-1" style={{ color }}>{value}</div>
-      {sub && <div className="text-muted text-xs mt-0.5">{sub}</div>}
+    <div className="stat-card" style={{ '--stat-color': color }}>
+      <div className="stat-card-label">
+        {icon && <span style={{ marginRight: 4 }}>{icon}</span>}
+        {label}
+      </div>
+      <div className="stat-card-value">{value}</div>
+      {subtext && (
+        <div style={{ fontSize: 11, color: '#6e7681', fontFamily: 'Inter, sans-serif', marginTop: 2 }}>
+          {subtext}
+        </div>
+      )}
     </div>
   )
 }
 
 function DistTable({ title, data }) {
   if (!data || Object.keys(data).length === 0) return null
-  const entries = Object.entries(data)
+  const entries = Object.entries(data).sort(([,a],[,b]) => b - a)
   const total   = entries.reduce((s, [, v]) => s + v, 0)
+
   return (
-    <div className="mt-4">
-      <div className="inp-label mb-2">{title}</div>
-      <table className="w-full text-xs">
-        <tbody>
-          {entries.map(([key, cnt]) => (
-            <tr key={key} className="border-b border-border/50">
-              <td className="py-1.5 pr-3 font-mono text-text">{key}</td>
-              <td className="py-1.5 pr-3 text-muted">{cnt.toLocaleString()}</td>
-              <td className="py-1.5 w-32">
-                <div className="flex items-center gap-2">
-                  <div
-                    className = "h-1.5 rounded-full bg-accent/60"
-                    style     = {{ width: `${Math.round(cnt / total * 100)}%`, minWidth: 2 }}
-                  />
-                  <span className="text-muted">{(cnt / total * 100).toFixed(1)}%</span>
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="card">
+      <div style={{
+        fontFamily: 'Inter, sans-serif',
+        fontWeight: 700,
+        fontSize: 12,
+        color: '#f0a500',
+        marginBottom: 14,
+        textTransform: 'uppercase',
+        letterSpacing: '.06em',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+      }}>
+        <span>▸</span>
+        {title.replace(/_/g, ' ')}
+        <span style={{ fontWeight: 400, color: '#6e7681', fontSize: 11, marginLeft: 4, textTransform: 'none', letterSpacing: 0 }}>
+          ({entries.length} values)
+        </span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {entries.map(([key, cnt]) => {
+          const pct = cnt / total * 100
+          return (
+            <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{
+                fontFamily: 'JetBrains Mono, monospace',
+                fontSize: 12,
+                color: '#c9d1d9',
+                width: 100,
+                flexShrink: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }} title={key}>
+                {key}
+              </div>
+              <div style={{
+                fontFamily: 'JetBrains Mono, monospace',
+                fontSize: 12,
+                color: '#8b949e',
+                width: 52,
+                flexShrink: 0,
+                textAlign: 'right',
+              }}>
+                {cnt.toLocaleString()}
+              </div>
+              <div className="dist-bar-track">
+                <div
+                  className="dist-bar-fill"
+                  style={{ width: `${Math.max(2, pct)}%` }}
+                />
+              </div>
+              <div style={{
+                fontFamily: 'Inter, sans-serif',
+                fontSize: 11,
+                fontWeight: 600,
+                color: '#8b949e',
+                width: 38,
+                flexShrink: 0,
+                textAlign: 'right',
+              }}>
+                {pct.toFixed(1)}%
+              </div>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -45,109 +100,184 @@ function DistTable({ title, data }) {
 export default function SummaryTab({ summary, loading }) {
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-40 gap-3 text-muted text-sm">
-        <div className="spinner" /> Loading statistics…
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 200, gap: 12, color: '#8b949e' }}>
+        <div className="spinner" />
+        <span style={{ fontFamily: 'Inter, sans-serif', fontSize: 14 }}>Loading statistics…</span>
       </div>
     )
   }
 
   if (!summary) {
     return (
-      <div className="text-muted text-sm">
+      <div style={{ color: '#6e7681', fontFamily: 'Inter, sans-serif', fontSize: 14 }}>
         Select files to view statistics.
       </div>
     )
   }
 
-  const { total_entries = 0, time_range = {},
-          levels = {}, components = {}, threads = {},
-          files = {}, top_messages = {}, error_samples = [] } = summary
-  const lvl = levels.distribution || levels
+  const {
+    total_entries   = 0,
+    time_range      = {},
+    distributions   = {},
+    top_messages    = {},
+    error_samples   = [],
+    field_definitions = [],
+  } = summary
+
+  const levelFieldName = field_definitions.find(f => f.type === 'level')?.name
+  const levelDist      = levelFieldName ? (distributions[levelFieldName] || {}) : {}
+
+  const errorCount = Object.entries(levelDist)
+    .filter(([k]) => ['ERROR','ERR','FATAL','CRIT','CRITICAL'].includes(k.toUpperCase()))
+    .reduce((s, [, v]) => s + v, 0)
+  const warnCount  = Object.entries(levelDist)
+    .filter(([k]) => ['WARNING','WARN','WRN'].includes(k.toUpperCase()))
+    .reduce((s, [, v]) => s + v, 0)
+  const infoCount  = Object.entries(levelDist)
+    .filter(([k]) => ['INFO','INF','I'].includes(k.toUpperCase()))
+    .reduce((s, [, v]) => s + v, 0)
+
+  const errorPct = total_entries > 0 ? ((errorCount / total_entries) * 100).toFixed(1) : '0'
+  const warnPct  = total_entries > 0 ? ((warnCount  / total_entries) * 100).toFixed(1) : '0'
 
   return (
-    <div className="flex flex-col gap-5 w-full">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, width: '100%' }}>
 
       {/* ── Stat cards ── */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="TOTAL ENTRIES"  value={total_entries.toLocaleString()} />
-        <StatCard label="ERRORS"   value={(lvl.ERROR   || 0).toLocaleString()} color="#f85149" />
-        <StatCard label="WARNINGS" value={(lvl.WARNING || 0).toLocaleString()} color="#d29922" />
-        <StatCard label="INFO"     value={(lvl.INFO    || 0).toLocaleString()} color="#58a6ff" />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
+        <StatCard
+          label="Total Entries"
+          value={total_entries.toLocaleString()}
+          color="#f0a500"
+          icon="📊"
+        />
+        {levelFieldName && (
+          <>
+            <StatCard
+              label="Errors"
+              value={errorCount.toLocaleString()}
+              color="#f85149"
+              icon="🔴"
+              subtext={`${errorPct}% of total`}
+            />
+            <StatCard
+              label="Warnings"
+              value={warnCount.toLocaleString()}
+              color="#d29922"
+              icon="⚠️"
+              subtext={`${warnPct}% of total`}
+            />
+            <StatCard
+              label="Info"
+              value={infoCount.toLocaleString()}
+              color="#58a6ff"
+              icon="ℹ️"
+            />
+          </>
+        )}
       </div>
 
       {/* ── Time range ── */}
       {time_range.start && (
-        <div className="card card-accent">
-          <div className="inp-label mb-1">Time Range</div>
-          <div className="font-mono text-xs text-teal-300">
-            {time_range.start} → {time_range.end}
+        <div className="card card-accent" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div className="inp-label">Time Range</div>
+          <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 13, color: '#39d3bb', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span>{time_range.start}</span>
+            <span style={{ color: '#f0a500', fontWeight: 700 }}>→</span>
+            <span>{time_range.end}</span>
           </div>
         </div>
       )}
 
-      {/* ── Distributions (two columns) ── */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-
-        {/* Level distribution */}
-        {Object.keys(lvl).length > 0 && (
-          <div className="card">
-            <div className="font-mono font-bold text-xs text-accent mb-2">Log Levels</div>
-            <DistTable data={lvl} />
-          </div>
-        )}
-
-        {/* Component distribution */}
-        {components.distribution && Object.keys(components.distribution).length > 0 && (
-          <div className="card">
-            <div className="font-mono font-bold text-xs text-accent mb-2">
-              Components ({components.total})
-            </div>
-            <DistTable data={components.distribution} />
-          </div>
-        )}
-
-        {/* Thread distribution */}
-        {threads.distribution && Object.keys(threads.distribution).length > 0 && (
-          <div className="card">
-            <div className="font-mono font-bold text-xs text-accent mb-2">
-              Threads ({threads.total})
-            </div>
-            <DistTable data={threads.distribution} />
-          </div>
-        )}
-
-        {/* Top source files */}
-        {files.top && Object.keys(files.top).length > 0 && (
-          <div className="card">
-            <div className="font-mono font-bold text-xs text-accent mb-2">Top Source Files</div>
-            <DistTable data={files.top} />
-          </div>
-        )}
-
-      </div>
+      {/* ── Dynamic distributions ── */}
+      {Object.keys(distributions).length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 14 }}>
+          {Object.entries(distributions).map(([fname, dist]) => (
+            <DistTable key={fname} title={fname} data={dist} />
+          ))}
+        </div>
+      )}
 
       {/* ── Top repeated messages ── */}
       {Object.keys(top_messages).length > 0 && (
         <div className="card">
-          <div className="font-mono font-bold text-xs text-accent mb-3">Top Repeated Messages</div>
-          {Object.entries(top_messages).map(([msg, cnt]) => (
-            <div key={msg} className="flex gap-3 py-1.5 border-b border-border/50 last:border-0">
-              <span className="chip flex-shrink-0">{cnt.toLocaleString()}×</span>
-              <span className="font-mono text-xs text-muted truncate">{msg}</span>
-            </div>
-          ))}
+          <div style={{
+            fontFamily: 'Inter, sans-serif',
+            fontWeight: 700,
+            fontSize: 12,
+            color: '#f0a500',
+            marginBottom: 14,
+            textTransform: 'uppercase',
+            letterSpacing: '.06em',
+          }}>
+            ▸ Top Repeated Messages
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {Object.entries(top_messages).map(([msg, cnt]) => (
+              <div key={msg} style={{
+                display: 'flex',
+                gap: 12,
+                alignItems: 'flex-start',
+                paddingBottom: 8,
+                borderBottom: '1px solid #21262d',
+              }}>
+                <span className="chip" style={{ flexShrink: 0, fontWeight: 700 }}>
+                  ×{cnt.toLocaleString()}
+                </span>
+                <span style={{
+                  fontFamily: 'JetBrains Mono, monospace',
+                  fontSize: 12,
+                  color: '#8b949e',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  flex: 1,
+                }}>
+                  {msg}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
       {/* ── Sample errors ── */}
       {error_samples.length > 0 && (
-        <div className="card">
-          <div className="font-mono font-bold text-xs text-err mb-3">Sample Errors</div>
-          {error_samples.map((e, i) => (
-            <div key={i} className="font-mono text-xs text-err/80 py-1 border-b border-border/50 last:border-0">
-              L{e.actual_line_number} [{e.timestamp}] — {e.message}
-            </div>
-          ))}
+        <div className="card" style={{ borderLeft: '3px solid #f85149' }}>
+          <div style={{
+            fontFamily: 'Inter, sans-serif',
+            fontWeight: 700,
+            fontSize: 12,
+            color: '#f85149',
+            marginBottom: 14,
+            textTransform: 'uppercase',
+            letterSpacing: '.06em',
+          }}>
+            ▸ Sample Errors
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {error_samples.map((e, i) => {
+              const tsField  = field_definitions.find(f => f.type === 'timestamp')?.name
+              const msgField = field_definitions.find(f => f.type === 'message')?.name
+              const ts  = tsField  ? (e.fields?.[tsField]  || '') : ''
+              const msg = msgField ? (e.fields?.[msgField] || '') : e.raw_line
+              return (
+                <div key={i} style={{
+                  fontFamily: 'JetBrains Mono, monospace',
+                  fontSize: 12,
+                  color: '#ff7b72',
+                  padding: '5px 0',
+                  borderBottom: '1px solid rgba(248,81,73,0.1)',
+                  opacity: 0.85,
+                }}>
+                  <span style={{ color: '#d2a8ff' }}>L{e.actual_line_number}</span>
+                  {ts && <span style={{ color: '#39d3bb', marginLeft: 8 }}>[{ts}]</span>}
+                  <span style={{ color: '#6e7681', margin: '0 6px' }}>—</span>
+                  <span>{msg}</span>
+                </div>
+              )
+            })}
+          </div>
         </div>
       )}
 
