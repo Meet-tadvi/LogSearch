@@ -357,6 +357,31 @@ async def get_summary(
     return ops.get_summary()
 
 
+@app.get('/api/summary/per-file')
+async def get_summary_per_file(
+    file_ids: Optional[str] = None,
+    session = Depends(get_session),
+):
+    """Individual statistics for each selected file."""
+    ids = file_ids.split(',') if file_ids else None
+    if not ids:
+        ids = list(session.files.keys())
+    
+    results = []
+    for fid in ids:
+        if fid not in session.files:
+            continue
+        file_data = session.files[fid]
+        summary = file_data.search_ops.get_summary()
+        results.append({
+            'file_id': fid,
+            'filename': file_data.filename,
+            'summary': summary
+        })
+        
+    return {'files': results}
+
+
 # ================================================================
 # EXPORT
 # ================================================================

@@ -44,6 +44,7 @@ export default function App() {
   const [results,        setResults]        = useState(null)
   const [loading,        setLoading]        = useState(false)
   const [summary,        setSummary]        = useState(null)
+  const [perFileSummaries, setPerFileSummaries] = useState(null)
   const [activeTab,      setActiveTab]      = useState('files')
   const [error,          setError]          = useState(null)
   const [llmHistory,     setLlmHistory]     = useState([])
@@ -108,6 +109,12 @@ export default function App() {
   useEffect(() => {
     if (activeTab !== 'summary' || !selectedIds.length) return
     api.getSummary(selectedIds).then(setSummary).catch(() => {})
+    
+    if (selectedIds.length > 1) {
+      api.getPerFileSummaries(selectedIds).then(d => setPerFileSummaries(d.files)).catch(() => {})
+    } else {
+      setPerFileSummaries(null)
+    }
   }, [activeTab, selectedIds])
 
   async function runSearch(pageNum) {
@@ -305,6 +312,7 @@ export default function App() {
           {activeTab === 'summary' && (
             <SummaryTab
               summary = {summary}
+              perFileSummaries = {perFileSummaries}
               loading = {!summary && selectedIds.length > 0}
             />
           )}

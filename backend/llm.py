@@ -10,7 +10,7 @@ import io
 import json
 from typing import List, Dict, AsyncGenerator
 
-OLLAMA_MODEL = 'llama3.1'
+OLLAMA_MODEL = 'deepseek-v3.1:671b-cloud'
 
 SYSTEM_PROMPT = """You are a log file analysis assistant.
 You have been given COMPLETE log data as a CSV table — every filtered row is present.
@@ -154,7 +154,7 @@ async def stream_ollama_response(
             stream   = True,
             options  = {
                 'temperature': 0.1,
-                'num_ctx':     8192,   # 8K — safe for llama3.1 8B on 6GB VRAM
+                'num_ctx':     32768,   # 8K — safe for llama3.1 8B on 6GB VRAM
                                        # (model ~4.7GB + KV cache ~1GB = ~5.7GB total)
                                        # Use narrow filters to keep CSV under ~6K tokens
                 'num_gpu':     99,     # offload ALL layers to GPU

@@ -67,9 +67,7 @@ function MessageBubble({ role, content }) {
 
 const EXAMPLE_QUESTIONS = [
   'What caused the errors?',
-  'Which component has the most warnings?',
   'Summarise the activity in this time range.',
-  'Are there any patterns in the error messages?',
 ]
 
 export default function LLMPanel({

@@ -97,24 +97,7 @@ function DistTable({ title, data }) {
   )
 }
 
-export default function SummaryTab({ summary, loading }) {
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 200, gap: 12, color: '#8b949e' }}>
-        <div className="spinner" />
-        <span style={{ fontFamily: 'Inter, sans-serif', fontSize: 14 }}>Loading statistics…</span>
-      </div>
-    )
-  }
-
-  if (!summary) {
-    return (
-      <div style={{ color: '#6e7681', fontFamily: 'Inter, sans-serif', fontSize: 14 }}>
-        Select files to view statistics.
-      </div>
-    )
-  }
-
+function SummaryLayout({ summary }) {
   const {
     total_entries   = 0,
     time_range      = {},
@@ -284,3 +267,80 @@ export default function SummaryTab({ summary, loading }) {
     </div>
   )
 }
+
+import { useState } from 'react'
+
+export default function SummaryTab({ summary, perFileSummaries, loading }) {
+  const [mode, setMode] = useState('combined')
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 200, gap: 12, color: '#8b949e' }}>
+        <div className="spinner" />
+        <span style={{ fontFamily: 'Inter, sans-serif', fontSize: 14 }}>Loading statistics…</span>
+      </div>
+    )
+  }
+
+  if (!summary) {
+    return (
+      <div style={{ color: '#6e7681', fontFamily: 'Inter, sans-serif', fontSize: 14 }}>
+        Select files to view statistics.
+      </div>
+    )
+  }
+
+  const showModeToggle = perFileSummaries && perFileSummaries.length > 1
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, width: '100%', paddingBottom: 40 }}>
+      {showModeToggle && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
+          <button
+            className={`tab ${mode === 'combined' ? 'active' : ''}`}
+            onClick={() => setMode('combined')}
+            style={{ padding: '6px 12px', minWidth: 100 }}
+          >
+            Combined Analysis
+          </button>
+          <button
+            className={`tab ${mode === 'per_file' ? 'active' : ''}`}
+            onClick={() => setMode('per_file')}
+            style={{ padding: '6px 12px', minWidth: 100 }}
+          >
+            Per File ({perFileSummaries.length})
+          </button>
+        </div>
+      )}
+
+      {(!showModeToggle || mode === 'combined') && (
+        <SummaryLayout summary={summary} />
+      )}
+
+      {showModeToggle && mode === 'per_file' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
+          {perFileSummaries.map((fs) => (
+            <div key={fs.file_id} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '12px 16px',
+                background: '#161b22',
+                borderRadius: '8px',
+                border: '1px solid #30363d'
+              }}>
+                <span style={{ fontSize: '18px' }}>📄</span>
+                <span style={{ fontFamily: 'Inter, sans-serif', fontWeight: 600, color: '#e6edf3', fontSize: 15 }}>
+                  {fs.filename}
+                </span>
+              </div>
+              <div style={{ paddingLeft: 12, borderLeft: '2px solid #30363d' }}>
+                <SummaryLayout summary={fs.summary} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+

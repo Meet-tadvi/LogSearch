@@ -164,6 +164,12 @@ export async function getSummary(fileIds) {
   return get(`/api/summary${qs}`)
 }
 
+/** Per-file statistics array. */
+export async function getPerFileSummaries(fileIds) {
+  const qs = fileIds && fileIds.length ? `?file_ids=${fileIds.join(',')}` : ''
+  return get(`/api/summary/per-file${qs}`)
+}
+
 // ================================================================
 // EXPORT
 // ================================================================
