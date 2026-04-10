@@ -19,8 +19,16 @@ Run (production):
 import csv
 import io
 import json
+import os
 import re
+import shutil
+import socket
+import subprocess
+import sys
 import tempfile
+import time
+import urllib.request
+import urllib.error
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +55,26 @@ from search_operations import SearchOperations
 # App setup
 # ================================================================
 
+# 1. Handle PyInstaller path resolution
+IS_FROZEN = getattr(sys, 'frozen', False)
+if IS_FROZEN:
+    BASE_PATH = Path(sys._MEIPASS)
+else:
+    BASE_PATH = Path(__file__).parent.parent
+
+# 2. Setup Persistent Application Data Directory
+APP_DATA_DIR = Path(os.getenv('APPDATA', str(Path.home()))) / 'LogSearch'
+APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+TEMP_DIR     = Path(tempfile.gettempdir())
+FORMATS_PATH = APP_DATA_DIR / 'log_formats.json'
+
+# Auto-copy default config to AppData on first run
+if not FORMATS_PATH.exists():
+    default_formats = BASE_PATH / 'backend' / 'log_formats.json'
+    if default_formats.exists():
+        shutil.copyfile(default_formats, FORMATS_PATH)
+
 app = FastAPI(
     title       = 'Log Search API',
     description = 'Multi-file dynamic log analysis — v3',
@@ -61,27 +89,84 @@ app.add_middleware(
     allow_headers     = ['*'],
 )
 
-TEMP_DIR     = Path(tempfile.gettempdir())
-FORMATS_PATH = Path(__file__).parent / 'log_formats.json'
-
 # Serve React production build from frontend/dist (production mode)
-_frontend_dist = Path(__file__).parent.parent / 'frontend' / 'dist'
+_frontend_dist = BASE_PATH / 'frontend' / 'dist'
 if _frontend_dist.exists():
     app.mount('/', StaticFiles(directory=str(_frontend_dist), html=True),
               name='frontend')
 
 
 # ================================================================
-# Startup
+# Lifecycle Events
 # ================================================================
+
+def check_port(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('127.0.0.1', port)) == 0
+
+def wait_for_ollama(timeout: int = 15):
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            with urllib.request.urlopen('http://127.0.0.1:11434/', timeout=1) as response:
+                if response.status == 200:
+                    return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
 
 @app.on_event('startup')
 async def startup():
-    """Restore sessions from disk and clean up expired ones."""
+    """Restore sessions from disk, clean up expired ones, and start Ollama in background."""
     store.restore_sessions()
     deleted = store.cleanup_expired()
     if deleted:
         print(f'[startup] Cleaned up {deleted} expired session(s).')
+        
+    # --- Ollama Background Management ---
+    if not check_port(11434):
+        print('[startup] Port 11434 is free. Launching Ollama in the background...')
+        env = os.environ.copy()
+        env['OLLAMA_KEEP_ALIVE'] = '0'  # Unload from GPU immediately after inference
+        
+        # CREATE_NO_WINDOW prevents the console from flashing/staying open on Windows
+        flags = 0x08000000 if os.name == 'nt' else 0
+        try:
+            subprocess.Popen(
+                ['ollama', 'serve'], 
+                env=env, 
+                creationflags=flags,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            print('[startup] Waiting for Ollama to become ready...')
+            if wait_for_ollama():
+                print('[startup] Ollama is ready!')
+            else:
+                print('[startup] Warning: Ollama did not respond in time.')
+        except FileNotFoundError:
+            print('[startup] Error: "ollama" command not found. User must install Ollama manually.')
+        except Exception as e:
+            print(f'[startup] Failed to start Ollama: {e}')
+    else:
+        print('[startup] Ollama (or another service) is already running on port 11434.')
+
+@app.on_event('shutdown')
+async def shutdown():
+    """Aggressively terminate the background Ollama process."""
+    print('[shutdown] Attempting to cleanly shut down Ollama...')
+    try:
+        req = urllib.request.Request('http://127.0.0.1:11434/api/shutdown', method='POST')
+        with urllib.request.urlopen(req, timeout=2) as response:
+            pass
+    except Exception:
+        pass
+        
+    print('[shutdown] Running taskkill on ollama.exe to ensure no GPU runners remain.')
+    if os.name == 'nt':
+        subprocess.run('taskkill /F /IM ollama.exe /T', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run('taskkill /F /IM ollama_llama_server.exe /T', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 # ================================================================
@@ -613,3 +698,9 @@ async def health():
         'timestamp':       datetime.utcnow().isoformat(),
         'active_sessions': len(store._sessions),
     }
+
+if __name__ == '__main__':
+    import multiprocessing
+    multiprocessing.freeze_support()
+    import uvicorn
+    uvicorn.run(app, host='127.0.0.1', port=8000)

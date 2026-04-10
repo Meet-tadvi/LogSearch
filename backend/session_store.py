@@ -13,6 +13,7 @@ Key change from v2:
 """
 
 import json
+import os
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from typing import Dict, Optional, List
@@ -22,7 +23,8 @@ from log_parser import LogEntry
 from search_operations import SearchOperations
 
 
-DATA_DIR          = Path(__file__).parent / 'data' / 'sessions'
+APP_DATA_DIR      = Path(os.getenv('APPDATA', str(Path.home()))) / 'LogSearch'
+DATA_DIR          = APP_DATA_DIR / 'sessions'
 SESSION_TTL_HOURS = 24
 
 
