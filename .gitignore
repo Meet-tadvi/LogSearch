@@ -4,3 +4,20 @@ __pycache__/
 *.pycbackend/data/
 frontend/node_modules
 
+# Docs / misc
+Project_Documentation.md
+alstom_document.md
+architecture_diagram.html
+problems.txt
+
+# Backend
+backend/benchmark.py
+backend/data/
+backend/test.py
+backend/test2.py
+
+# Frontend
+frontend/dist/
+
+# Scripts
+build_desktop.ps1
