@@ -256,7 +256,7 @@ export default function Sidebar({
               </div>
               <input
                 className   = "inp"
-                placeholder = "Search in raw log line…"
+                placeholder = "multi keyword search, …"
                 value       = {pending.text}
                 onChange    = {e => onPendingChange('text', e.target.value)}
                 onKeyDown   = {e => e.key === 'Enter' && onApply()}
@@ -272,7 +272,7 @@ export default function Sidebar({
                   <div className="inp-label" style={{ justifyContent: 'space-between' }}>
                     <span>{fd.name.replace(/_/g, ' ')}</span>
                     {fd.type === 'level' && (
-                      <span className="chip" style={{ fontSize: 9, padding: '1px 6px', borderRadius: 10 }}>level</span>
+                      <span className="chip" style={{ fontSize: 9, padding: '1px 6px', borderRadius: 10 }}></span>
                     )}
                   </div>
                   <MultiSelect

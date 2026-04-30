@@ -14,7 +14,8 @@
  *   generateFormat(sampleLines) -> calls POST /api/formats/generate
  */
 
-const BASE_URL = 'http://localhost:8000'
+// Use relative paths in production (PyWebview) to avoid CORS issues
+const BASE_URL = import.meta.env.DEV ? 'http://localhost:8000' : ''
 
 // ── Session ID ────────────────────────────────────────────────────
 export function getSessionId() {
@@ -322,12 +323,24 @@ export async function deleteFormat(name) {
 }
 
 /**
- * Ask the LLM to generate a format definition from sample lines.
- * sampleLines: string[]
- * Returns: { name, description, pattern, fields, example, match_rate, ... }
+ * Upload a log file directly for AI-assisted format generation.
+ * file: File object from a file input or drag-and-drop event.
+ * Returns: { name, description, pattern, fields, example, match_rate,
+ *            sampled_lines, total_sampled, source_file, ... }
  */
-export async function generateFormat(sampleLines) {
-  return post('/api/formats/generate', { sample_lines: sampleLines })
+export async function generateFormatFromFile(file) {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(BASE_URL + '/api/formats/generate-from-file', {
+    method:  'POST',
+    headers: fileHeaders(),
+    body:    form,
+  })
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(detail.detail || res.statusText)
+  }
+  return res.json()
 }
 
 // ================================================================

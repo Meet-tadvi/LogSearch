@@ -338,17 +338,54 @@ body {
 .drop-zone {
   border: 2px dashed #30363d;
   border-radius: 10px;
-  padding: 20px 16px;
+  padding: 32px 20px;
   text-align: center;
   cursor: pointer;
   transition: border-color .2s, background .2s, box-shadow .2s;
   background: rgba(255,255,255,0.01);
+  user-select: none;
 }
-.drop-zone:hover, .drop-zone.drag-over {
-  border-color: #f0a500;
-  background: rgba(240,165,0,.06);
-  box-shadow: 0 0 0 3px rgba(240,165,0,0.08);
+.drop-zone:hover {
+  border-color: #484f58;
+  background: rgba(255,255,255,0.025);
 }
+.drop-zone-active {
+  border-color: #f0a500 !important;
+  background: rgba(240,165,0,.07) !important;
+  box-shadow: 0 0 0 4px rgba(240,165,0,0.10);
+}
+.drop-zone-filled {
+  border-color: #3fb950;
+  border-style: solid;
+  background: rgba(63,185,80,0.05);
+}
+.drop-zone-filled:hover {
+  border-color: #56d364;
+  background: rgba(63,185,80,0.08);
+}
+
+/* ── AI result bubble (FormatsTab) ─────────────────────────── */
+.ai-bubble {
+  background: linear-gradient(135deg, rgba(22,27,34,0.95) 0%, rgba(28,35,46,0.95) 100%);
+  border: 1px solid rgba(88,166,255,0.20);
+  border-left: 3px solid #58a6ff;
+  border-radius: 4px 10px 10px 10px;
+  padding: 14px 16px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.03);
+}
+
+/* ── Fade + slide-in animation ─────────────────────────────── */
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Utility text colours ───────────────────────────────────── */
+.text-ok  { color: #3fb950; }
+.text-err { color: #f85149; }
+.text-accent { color: #f0a500; }
+.text-text   { color: #e6edf3; }
+.text-muted  { color: #8b949e; }
 
 /* ── Section divider ───────────────────────────────────────── */
 .section-divider {

@@ -1,21 +1,46 @@
 {
-  "name": "log-search-frontend",
+  "name": "log-Vision-frontend",
   "version": "2.0.0",
   "type": "module",
+  "main": "electron-main.js",
   "scripts": {
-    "dev":     "vite",
-    "build":   "vite build",
-    "preview": "vite preview"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "electron ."
   },
   "dependencies": {
-    "react":     "^18.3.1",
+    "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
-    "autoprefixer":         "^10.4.20",
-    "postcss":              "^8.4.47",
-    "tailwindcss":          "^3.4.14",
-    "vite":                 "^5.4.10"
+    "autoprefixer": "^10.4.20",
+    "electron": "^41.3.0",
+    "electron-builder": "^26.8.1",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.14",
+    "vite": "^5.4.10"
+  },
+  "build": {
+    "appId": "com.logvision.app",
+    "productName": "Log Vision",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "electron-main.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist-python/backend",
+        "to": "backend"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    }
   }
 }
