@@ -11,6 +11,7 @@ import json
 from typing import List, Dict, AsyncGenerator
 
 OLLAMA_MODEL = 'deepseek-v3.1:671b-cloud'
+# OLLAMA_MODEL = 'llama3.1'
 
 SYSTEM_PROMPT = """You are a log file analysis assistant.
 You have been given COMPLETE log data as a CSV table — every filtered row is present.
@@ -77,6 +78,7 @@ def build_stat_header(match_summary: Dict) -> str:
         )
     dists = match_summary.get('distributions', {})
     for fname, dist in list(dists.items())[:4]:
+        
         top = list(dist.items())[:5]
         lines.append(f"{fname:14}: {top}")
 
@@ -154,11 +156,11 @@ async def stream_ollama_response(
             stream   = True,
             options  = {
                 'temperature': 0.1,
-                'num_ctx':     32768,   # 8K — safe for llama3.1 8B on 6GB VRAM
+                # 'num_ctx': 32768,    # 8K — safe for llama3.1 8B on 6GB VRAM
                                        # (model ~4.7GB + KV cache ~1GB = ~5.7GB total)
-                                       # Use narrow filters to keep CSV under ~6K tokens
+                'num_ctx':  160000,     # Use narrow filters to keep CSV under ~6K tokens
                 'num_gpu':     99,     # offload ALL layers to GPU
-                'num_thread':  8,
+                'num_thread':   8,
             }
         )
         for chunk in stream:
@@ -181,25 +183,30 @@ async def stream_ollama_response(
 # ================================================================
 
 FORMAT_GENERATION_PROMPT = """You are an expert log format analyser and Python regex writer.
-Given sample log lines, produce a complete log format definition as a JSON object.
+Given sample log lines from a file, produce a complete log format definition as a JSON object.
 
 RULES:
-1. pattern must use Python named capture groups: (?P<name>...)
-2. pattern MUST include (?P<message>...) — always required
-3. Include (?P<timestamp>...) only if a date/time is present in the lines
-4. fields is a list of {name, type} objects — one per named group in the pattern
-5. Field types — choose the best fit:
+1. pattern MUST use Python named capture groups: (?P<name>...)
+2. Include (?P<timestamp>...) only if a date/time is present in the lines.
+3. Include (?P<message>...) ONLY if a clear primary text/description field exists. Do NOT invent a message field if the log is structured data (e.g. CSV-style rows, numeric tables).
+4. CRITICAL — Inspect the lines carefully for CONSISTENCY:
+   - If ALL lines have a field in the same position → use a REQUIRED group: (?P<name>...)
+   - If a field is SOMETIMES absent or optional → use an OPTIONAL non-capturing wrapper: (?:...(?P<name>...))?
+   - If the log is CSV-like with a consistent separator, capture each column as its own field.
+5. fields is a list of {name, type} objects — one per named group in the pattern.
+6. Field types — choose the best fit:
      timestamp : date/time of the log entry
      level     : severity (INFO/ERROR/WARNING/DEBUG or similar abbreviations)
-     message   : the main log text (usually the last field)
+     message   : the main freeform log text
      text      : any repeating categorical value (component, module, thread id, filename, etc.)
      number    : numeric value (line numbers, counts, durations, etc.)
-6. Every named group in the pattern MUST appear in fields, and vice versa
-7. Return ONLY valid JSON — no explanation, no markdown, no code fences
+7. Every named group in the pattern MUST appear in fields, and vice versa.
+8. The pattern MUST match the MAJORITY of the provided lines.
+9. Return ONLY valid JSON — no explanation, no markdown, no code fences.
 
-EXAMPLE OUTPUT:
+EXAMPLE 1 — Structured log with a message field:
 {
-  "name":        "my_app_logs",
+  "name":        "app_logs",
   "description": "Application server logs",
   "pattern":     "(?P<timestamp>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}) (?P<level>\\w+) (?P<service>\\S+) (?P<message>.+)",
   "fields": [
@@ -209,6 +216,21 @@ EXAMPLE OUTPUT:
     {"name": "message",   "type": "message"}
   ],
   "example": "2025-04-17 08:35:19 ERROR auth-service Login failed for user john"
+}
+
+EXAMPLE 2 — CSV/structured data log WITHOUT a message field (optional level field):
+{
+  "name":        "video_db_log",
+  "description": "Video DB CSV-style recording log",
+  "pattern":     "(?P<filename>[^,]+),(?P<date>[A-Za-z]+ [A-Za-z]+ \\d+ \\d{4}),(?P<time>\\d{2}:\\d{2}:\\d{2})(?:,(?P<duration>[^,]+))?(?:,(?P<trip_code>[^,]+))?",
+  "fields": [
+    {"name": "filename",  "type": "text"},
+    {"name": "date",      "type": "timestamp"},
+    {"name": "time",      "type": "timestamp"},
+    {"name": "duration",  "type": "text"},
+    {"name": "trip_code", "type": "text"}
+  ],
+  "example": "video.h264,Fri Mar 21 2025,11:29:07,00:10.214,4A01"
 }
 
 Now analyse these sample lines and return the JSON format definition:
@@ -265,11 +287,7 @@ async def ask_ollama_for_format(sample_lines: List[str]) -> Dict:
 
         # Validate pattern compiles
         compiled = _re.compile(result['pattern'])
-
-        # Validate message group exists
         groups = set(compiled.groupindex.keys())
-        if 'message' not in groups:
-            raise ValueError("Generated pattern is missing (?P<message>...) group")
 
         # Validate field names match pattern groups
         field_names = {f['name'] for f in result.get('fields', [])}

@@ -3,13 +3,34 @@
     "description": "Railway PIS system logs",
     "pattern": "(?P<timestamp>\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}:\\d{3})\\s*\\|(?P<component>[^:]+?)\\s*:\\s*(?P<file_path>[^:]+?):(?P<line_number>\\d+):\\(\\):(?P<level>\\w+):(?P<thread_id>\\d+):(?P<message>.+)",
     "fields": [
-      { "name": "timestamp",   "type": "timestamp" },
-      { "name": "component",   "type": "text"      },
-      { "name": "file_path",   "type": "text"      },
-      { "name": "line_number", "type": "number"    },
-      { "name": "level",       "type": "level"     },
-      { "name": "thread_id",   "type": "text"      },
-      { "name": "message",     "type": "message"   }
+      {
+        "name": "timestamp",
+        "type": "timestamp"
+      },
+      {
+        "name": "component",
+        "type": "text"
+      },
+      {
+        "name": "file_path",
+        "type": "text"
+      },
+      {
+        "name": "line_number",
+        "type": "number"
+      },
+      {
+        "name": "level",
+        "type": "level"
+      },
+      {
+        "name": "thread_id",
+        "type": "text"
+      },
+      {
+        "name": "message",
+        "type": "message"
+      }
     ],
     "example": "2025-04-17T08:35:19:981 |XRAIL :  nvramserialiser.cpp:15:():INFO:1:Found NvRam."
   },
@@ -17,15 +38,136 @@
     "description": "WDOG watchdog system logs",
     "pattern": "(?P<timestamp>\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}\\.\\d{3})\\s+(?P<thread_id>[0-9a-fA-F]{8})\\s+(?P<component>\\S+)\\s+(?P<level>\\w{3})\\s+(?P<priority>p\\d+)\\s+(?P<file_path>[\\w.]+):(?P<line_number>\\d+)\\s+(?P<message>.+)",
     "fields": [
-      { "name": "timestamp",   "type": "timestamp" },
-      { "name": "thread_id",   "type": "text"      },
-      { "name": "component",   "type": "text"      },
-      { "name": "level",       "type": "level"     },
-      { "name": "priority",    "type": "text"      },
-      { "name": "file_path",   "type": "text"      },
-      { "name": "line_number", "type": "number"    },
-      { "name": "message",     "type": "message"   }
+      {
+        "name": "timestamp",
+        "type": "timestamp"
+      },
+      {
+        "name": "thread_id",
+        "type": "text"
+      },
+      {
+        "name": "component",
+        "type": "text"
+      },
+      {
+        "name": "level",
+        "type": "level"
+      },
+      {
+        "name": "priority",
+        "type": "text"
+      },
+      {
+        "name": "file_path",
+        "type": "text"
+      },
+      {
+        "name": "line_number",
+        "type": "number"
+      },
+      {
+        "name": "message",
+        "type": "message"
+      }
     ],
     "example": "04-02 02:55:24.115 b72d6000  WDOG Inf p0 wdg_SystemAvai:0399 System available"
+  },
+  "streaming_server": {
+    "description": "Streaming server logs",
+    "pattern": "\"(?P<timestamp>\\d{8}:\\d{6}\\.\\d{3})\"(?:\\s*:(?P<level>\\w+))?(?:\\s*(?P<message>.+))?",
+    "fields": [
+      {
+        "name": "timestamp",
+        "type": "timestamp"
+      },
+      {
+        "name": "level",
+        "type": "level"
+      },
+      {
+        "name": "message",
+        "type": "message"
+      }
+    ],
+    "example": "\"26032025:095355.402\"  :XML: Total StreamId count = 1"
+  },
+  "video_recording_log": {
+    "description": "Video recording CSV-style log with metadata header",
+    "pattern": "(?:(?P<header>Log File Created on: [A-Za-z]+ [A-Za-z]+ \\d+ \\d{2}:\\d{2}:\\d{2} \\d{4})|(?P<streaming_server>StreamingServer:[\\d.]+)|(?P<video_db>VideoDB:[\\d.]+)|(?P<column_names>File Name,Start Date,Start time,Duration,Customer Trip Code,Origin Station ID,Destination Station ID)|(?P<filename>[^,]+),(?P<start_date>[A-Za-z]+ [A-Za-z]+ \\d+ \\d{4}),(?P<start_time>\\d{2}:\\d{2}:\\d{2}),(?P<duration>[^,]+),(?P<trip_code>[^,]+),(?P<origin_station>\\d+),(?P<destination_station>\\d+))",
+    "fields": [
+      {
+        "name": "filename",
+        "type": "text"
+      },
+      {
+        "name": "start_date",
+        "type": "timestamp"
+      },
+      {
+        "name": "start_time",
+        "type": "timestamp"
+      },
+      {
+        "name": "duration",
+        "type": "text"
+      },
+      {
+        "name": "trip_code",
+        "type": "text"
+      },
+      {
+        "name": "origin_station",
+        "type": "text"
+      },
+      {
+        "name": "destination_station",
+        "type": "text"
+      }
+    ],
+    "example": "1920x1080SWRScreen01.H264,Fri Mar 21 2025,11:29:07,00:10.214,4A01,5451825,5452087"
+  },
+  "apache_access_log": {
+    "description": "Apache web server access logs in combined format",
+    "pattern": "(?P<client_ip>\\S+) - - \\[(?P<timestamp>[^\\]]+)\\] \"(?P<method>\\S+) (?P<path>\\S+) (?P<protocol>\\S+)\" (?P<status_code>\\d+) (?P<response_size>\\d+) \"(?P<referrer>[^\"]*)\" \"(?P<user_agent>[^\"]*)\"",
+    "fields": [
+      {
+        "name": "client_ip",
+        "type": "text"
+      },
+      {
+        "name": "timestamp",
+        "type": "timestamp"
+      },
+      {
+        "name": "method",
+        "type": "text"
+      },
+      {
+        "name": "path",
+        "type": "text"
+      },
+      {
+        "name": "protocol",
+        "type": "text"
+      },
+      {
+        "name": "status_code",
+        "type": "number"
+      },
+      {
+        "name": "response_size",
+        "type": "number"
+      },
+      {
+        "name": "referrer",
+        "type": "message"
+      },
+      {
+        "name": "user_agent",
+        "type": "message"
+      }
+    ],
+    "example": "83.149.9.216 - - [17/May/2015:10:05:03 +0000] \"GET /presentations/logstash-monitorama-2013/images/kibana-search.png HTTP/1.1\" 200 203023 \"http://semicomplete.com/presentations/logstash-monitorama-2013/\" \"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/32.0.1700.77 Safari/537.36\""
   }
 }

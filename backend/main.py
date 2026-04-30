@@ -30,9 +30,10 @@ import time
 import urllib.request
 import urllib.error
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -59,41 +60,97 @@ from search_operations import SearchOperations
 IS_FROZEN = getattr(sys, 'frozen', False)
 if IS_FROZEN:
     BASE_PATH = Path(sys._MEIPASS)
+    # Portable mode: save data right next to the .exe file
+    EXE_DIR = Path(sys.executable).parent
+    APP_DATA_DIR = EXE_DIR / 'data'
+    FORMATS_PATH = EXE_DIR / 'log_formats.json'
+    
+    # If starting the .exe for the first time, extract the default formats file
+    if not FORMATS_PATH.exists():
+        bundled_formats = BASE_PATH / 'backend' / 'log_formats.json'
+        if bundled_formats.exists():
+            shutil.copyfile(bundled_formats, FORMATS_PATH)
 else:
     BASE_PATH = Path(__file__).parent.parent
+    APP_DATA_DIR = BASE_PATH / 'backend' / 'data'
+    FORMATS_PATH = BASE_PATH / 'backend' / 'log_formats.json'
 
 # 2. Setup Persistent Application Data Directory
-APP_DATA_DIR = Path(os.getenv('APPDATA', str(Path.home()))) / 'LogSearch'
 APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+TEMP_DIR = Path(tempfile.gettempdir())
 
-TEMP_DIR     = Path(tempfile.gettempdir())
-FORMATS_PATH = APP_DATA_DIR / 'log_formats.json'
+def kill_ollama():
+    """Aggressively terminate the background Ollama process."""
+    print('[shutdown] Attempting to cleanly shut down Ollama...')
+    try:
+        req = urllib.request.Request('http://127.0.0.1:11434/api/shutdown', method='POST')
+        with urllib.request.urlopen(req, timeout=2):
+            pass
+    except Exception:
+        pass
+        
+    print('[shutdown] Running taskkill on ollama.exe to ensure no GPU runners remain.')
+    if os.name == 'nt':
+        import subprocess
+        subprocess.run('taskkill /F /IM ollama.exe /T', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run('taskkill /F /IM ollama_llama_server.exe /T', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-# Auto-copy default config to AppData on first run
-if not FORMATS_PATH.exists():
-    default_formats = BASE_PATH / 'backend' / 'log_formats.json'
-    if default_formats.exists():
-        shutil.copyfile(default_formats, FORMATS_PATH)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Restore sessions from disk, clean up expired ones, and start Ollama in background."""
+    store.restore_sessions()
+    deleted = store.cleanup_expired()
+    if deleted:
+        print(f'[startup] Cleaned up {deleted} expired session(s).')
+        
+    # --- Ollama Background Management ---
+    if not check_port(11434):
+        print('[startup] Port 11434 is free. Launching Ollama in the background...')
+        env = os.environ.copy()
+        env['OLLAMA_KEEP_ALIVE'] = '0'  # Unload from GPU immediately after inference
+        
+        # CREATE_NO_WINDOW prevents the console from flashing/staying open on Windows
+        flags = 0x08000000 if os.name == 'nt' else 0
+        try:
+            import subprocess
+            subprocess.Popen(
+                ['ollama', 'serve'], 
+                env=env, 
+                creationflags=flags,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            print('[startup] Waiting for Ollama to become ready...')
+            if wait_for_ollama():
+                print('[startup] Ollama is ready!')
+            else:
+                print('[startup] Warning: Ollama did not respond in time.')
+        except FileNotFoundError:
+            print('[startup] Error: "ollama" command not found. User must install Ollama manually.')
+        except Exception as e:
+            print(f'[startup] Failed to start Ollama: {e}')
+    else:
+        print('[startup] Ollama (or another service) is already running on port 11434.')
+
+    yield  # App runs here
+    
+    # Run shutdown logic when FastAPI exits gracefully
+    kill_ollama()
 
 app = FastAPI(
-    title       = 'Log Search API',
+    title       = 'Log Vision API',
     description = 'Multi-file dynamic log analysis — v3',
     version     = '3.0.0',
+    lifespan    = lifespan
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins     = ['http://localhost:5173'],
+    allow_origins     = ['http://localhost:5173', 'http://localhost:8000', 'http://127.0.0.1:8000'],
     allow_credentials = True,
     allow_methods     = ['*'],
     allow_headers     = ['*'],
 )
-
-# Serve React production build from frontend/dist (production mode)
-_frontend_dist = BASE_PATH / 'frontend' / 'dist'
-if _frontend_dist.exists():
-    app.mount('/', StaticFiles(directory=str(_frontend_dist), html=True),
-              name='frontend')
 
 
 # ================================================================
@@ -116,57 +173,7 @@ def wait_for_ollama(timeout: int = 15):
         time.sleep(0.5)
     return False
 
-@app.on_event('startup')
-async def startup():
-    """Restore sessions from disk, clean up expired ones, and start Ollama in background."""
-    store.restore_sessions()
-    deleted = store.cleanup_expired()
-    if deleted:
-        print(f'[startup] Cleaned up {deleted} expired session(s).')
-        
-    # --- Ollama Background Management ---
-    if not check_port(11434):
-        print('[startup] Port 11434 is free. Launching Ollama in the background...')
-        env = os.environ.copy()
-        env['OLLAMA_KEEP_ALIVE'] = '0'  # Unload from GPU immediately after inference
-        
-        # CREATE_NO_WINDOW prevents the console from flashing/staying open on Windows
-        flags = 0x08000000 if os.name == 'nt' else 0
-        try:
-            subprocess.Popen(
-                ['ollama', 'serve'], 
-                env=env, 
-                creationflags=flags,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-            print('[startup] Waiting for Ollama to become ready...')
-            if wait_for_ollama():
-                print('[startup] Ollama is ready!')
-            else:
-                print('[startup] Warning: Ollama did not respond in time.')
-        except FileNotFoundError:
-            print('[startup] Error: "ollama" command not found. User must install Ollama manually.')
-        except Exception as e:
-            print(f'[startup] Failed to start Ollama: {e}')
-    else:
-        print('[startup] Ollama (or another service) is already running on port 11434.')
 
-@app.on_event('shutdown')
-async def shutdown():
-    """Aggressively terminate the background Ollama process."""
-    print('[shutdown] Attempting to cleanly shut down Ollama...')
-    try:
-        req = urllib.request.Request('http://127.0.0.1:11434/api/shutdown', method='POST')
-        with urllib.request.urlopen(req, timeout=2) as response:
-            pass
-    except Exception:
-        pass
-        
-    print('[shutdown] Running taskkill on ollama.exe to ensure no GPU runners remain.')
-    if os.name == 'nt':
-        subprocess.run('taskkill /F /IM ollama.exe /T', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run('taskkill /F /IM ollama_llama_server.exe /T', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 # ================================================================
@@ -624,13 +631,6 @@ async def add_format(req: AddFormatRequest):
 
     named = set(compiled.groupindex.keys())
 
-    # message group is mandatory
-    if 'message' not in named:
-        raise HTTPException(
-            status_code=422,
-            detail="Pattern must include a (?P<message>...) named group.",
-        )
-
     # All declared field names must be captured by the pattern
     field_names = {f['name'] for f in req.fields}
     undefined   = field_names - named
@@ -680,6 +680,36 @@ async def generate_format(req: FormatGenerateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post('/api/formats/generate-from-file')
+async def generate_format_from_file(file: UploadFile = File(...)):
+    """
+    Upload a log file directly for AI-assisted format generation.
+    Reads up to 150 non-empty lines as a sample, calls Ollama,
+    and returns a complete format definition + sampled line preview.
+    """
+    MAX_CHARS = 10 * 1024 * 1024  # 10 MB text cap
+    content = await file.read()
+    text    = content.decode('utf-8', errors='replace')[:MAX_CHARS]
+    lines   = [l.strip() for l in text.splitlines() if l.strip()]
+
+    if len(lines) < 2:
+        raise HTTPException(
+            status_code=422,
+            detail='File has fewer than 2 non-empty lines — cannot generate a format.',
+        )
+
+    sample = lines[:150]
+    try:
+        result = await ask_ollama_for_format(sample)
+        # Return a short preview of the sampled lines so the UI can show them
+        result['sampled_lines']  = sample[:30]
+        result['total_sampled']  = len(sample)
+        result['source_file']    = file.filename
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ================================================================
 # SESSION + HEALTH
 # ================================================================
@@ -695,12 +725,54 @@ async def delete_session(session = Depends(get_session)):
 async def health():
     return {
         'status':          'ok',
-        'timestamp':       datetime.utcnow().isoformat(),
+        'timestamp':       datetime.now(timezone.utc).isoformat(),
         'active_sessions': len(store._sessions),
     }
+
+@app.post('/api/shutdown')
+async def shutdown_server():
+    """Electron calls this to ensure Ollama dies and the server exits."""
+    import threading
+    import os
+    import time
+    import sys
+    
+    # 1. Kill Ollama synchronously so Electron WAITS for it to finish
+    try:
+        kill_ollama()
+    except Exception as e:
+        print(f"Error killing Ollama: {e}")
+        
+    # 2. Tell the server to kill itself shortly after sending the response
+    def stop():
+        time.sleep(0.5)
+        sys.stdout.flush()
+        os._exit(0)
+        
+    threading.Thread(target=stop).start()
+    return {"message": "Shutting down"}
+
+# ================================================================
+# Static Files (Must be defined AFTER all API routes)
+# ================================================================
+
+_frontend_dist = BASE_PATH / 'frontend' / 'dist'
+if _frontend_dist.exists():
+    app.mount('/', StaticFiles(directory=str(_frontend_dist), html=True), name='frontend')
 
 if __name__ == '__main__':
     import multiprocessing
     multiprocessing.freeze_support()
     import uvicorn
-    uvicorn.run(app, host='127.0.0.1', port=8000)
+    import sys
+    
+    # Allow Electron to specify the port if needed
+    port = 8000
+    if len(sys.argv) > 1:
+        try:
+            port = int(sys.argv[1])
+        except ValueError:
+            pass
+            
+    # Run the standard FastAPI application
+    uvicorn.run(app, host='127.0.0.1', port=port, log_level="info")

@@ -3,9 +3,6 @@ Log Parser Module — v3
 ======================
 Fully dynamic field-based parser.
 
-No fixed LogEntry attributes, no level_map, no timestamp_format,
-no ISO normalisation, no cross-file sorting by timestamp.
-
 Field types (used only as UI hints — values stored exactly as parsed):
     timestamp  -> raw string, drives time-range filter
     level      -> raw string, drives colour-coded multiselect
@@ -32,28 +29,6 @@ class LogEntry:
     One parsed log line. All field values live in `fields` dict.
     Keys and value types depend entirely on the format definition.
 
-    pis_railway example:
-        fields = {
-            'timestamp':   '2025-04-17T08:35:19:981',
-            'component':   'XRAIL',
-            'file_path':   'nvramserialiser.cpp',
-            'line_number': '15',
-            'level':       'INFO',
-            'thread_id':   '1',
-            'message':     'Found NvRam.',
-        }
-
-    wdog_system example:
-        fields = {
-            'timestamp':   '04-02 02:55:24.115',
-            'thread_id':   'b72d6000',
-            'component':   'WDOG',
-            'level':       'Inf',
-            'priority':    'p0',
-            'file_path':   'wdg_SystemAvai',
-            'line_number': '0399',
-            'message':     'System available',
-        }
     """
     actual_line_number: int
     raw_line:           str
@@ -77,38 +52,7 @@ class LogEntry:
 
 _DEFAULT_FORMATS_PATH = Path(__file__).parent / 'log_formats.json'
 
-_BUILTIN_FORMATS_RAW = {
-    "pis_railway": {
-        "description": "Railway PIS system logs",
-        "pattern": r"(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}:\d{3})\s*\|(?P<component>[^:]+?)\s*:\s*(?P<file_path>[^:]+?):(?P<line_number>\d+):\(\):(?P<level>\w+):(?P<thread_id>\d+):(?P<message>.+)",
-        "fields": [
-            {"name": "timestamp",   "type": "timestamp"},
-            {"name": "component",   "type": "text"},
-            {"name": "file_path",   "type": "text"},
-            {"name": "line_number", "type": "number"},
-            {"name": "level",       "type": "level"},
-            {"name": "thread_id",   "type": "text"},
-            {"name": "message",     "type": "message"},
-        ],
-        "example": "2025-04-17T08:35:19:981 |XRAIL :  nvramserialiser.cpp:15:():INFO:1:Found NvRam."
-    },
-    "wdog_system": {
-        "description": "WDOG watchdog system logs",
-        "pattern": r"(?P<timestamp>\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(?P<thread_id>[0-9a-fA-F]{8})\s+(?P<component>\S+)\s+(?P<level>\w{3})\s+(?P<priority>p\d+)\s+(?P<file_path>[\w.]+):(?P<line_number>\d+)\s+(?P<message>.+)",
-        "fields": [
-            {"name": "timestamp",   "type": "timestamp"},
-            {"name": "thread_id",   "type": "text"},
-            {"name": "component",   "type": "text"},
-            {"name": "level",       "type": "level"},
-            {"name": "priority",    "type": "text"},
-            {"name": "file_path",   "type": "text"},
-            {"name": "line_number", "type": "number"},
-            {"name": "message",     "type": "message"},
-        ],
-        "example": "04-02 02:55:24.115 b72d6000  WDOG Inf p0 wdg_SystemAvai:0399 System available"
-    }
-}
-
+_BUILTIN_FORMATS_RAW = {}
 
 def _compile_formats(raw: Dict) -> Dict:
     """Compile raw dicts — adds compiled regex and field_map lookup."""

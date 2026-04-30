@@ -21,12 +21,17 @@ from pathlib import Path
 
 from log_parser import LogEntry
 from search_operations import SearchOperations
+import sys
 
 
-APP_DATA_DIR      = Path(os.getenv('APPDATA', str(Path.home()))) / 'LogSearch'
+IS_FROZEN = getattr(sys, 'frozen', False)
+if IS_FROZEN:
+    APP_DATA_DIR = Path(sys.executable).parent / 'data'
+else:
+    APP_DATA_DIR = Path(__file__).resolve().parent / 'data'
+
 DATA_DIR          = APP_DATA_DIR / 'sessions'
 SESSION_TTL_HOURS = 24
-
 
 # ================================================================
 # Data classes

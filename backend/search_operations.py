@@ -9,7 +9,7 @@ filter dict shape: { field_name: [allowed_value, ...] }
 """
 
 from typing import List, Dict, Optional, Set
-from collections import Counter, defaultdict
+from collections import Counter
 from log_parser import LogEntry
 
 
@@ -39,7 +39,7 @@ class SearchOperations:
         self.timestamp_field = self._field_of_type('timestamp')
         self.message_field   = self._field_of_type('message')
 
-        self._build_indices()
+
 
     # ── Helpers ───────────────────────────────────────────────────
 
@@ -49,48 +49,6 @@ class SearchOperations:
             if f['type'] == ftype:
                 return f['name']
         return None
-
-    # ── Index building ────────────────────────────────────────────
-
-    def _build_indices(self):
-        """
-        Build lookup indices for fast filtering.
-
-        line_index      : line_number -> LogEntry  (direct lookup)
-        timestamp_index : timestamp_prefix -> [line_numbers]  (5 granularities)
-        field_indices   : {field_name: {lowercased_value -> [line_numbers]}}
-                          built for every text / level / number field
-        """
-        self.line_index: Dict[int, LogEntry] = {}
-
-        # Multi-granularity prefix index for time-range filtering
-        self.timestamp_index: Dict[str, List[int]] = defaultdict(list)
-
-        # One value-index per text/level/number field
-        self.field_indices: Dict[str, Dict[str, List[int]]] = {
-            f['name']: defaultdict(list)
-            for f in self.field_definitions
-            if f['type'] in ('text', 'level', 'number')
-        }
-
-        for entry in self.logs:
-            ln = entry.actual_line_number
-            self.line_index[ln] = entry
-
-            # Timestamp prefix index at 5 granularities
-            if self.timestamp_field:
-                ts = entry.fields.get(self.timestamp_field, '')
-                if ts:
-                    self.timestamp_index[ts].append(ln)
-                    for length in (19, 16, 13, 10):
-                        if len(ts) >= length:
-                            self.timestamp_index[ts[:length]].append(ln)
-
-            # Field value indices (lowercased for case-insensitive match)
-            for fname, idx in self.field_indices.items():
-                val = entry.fields.get(fname)
-                if val:
-                    idx[val.lower()].append(ln)
 
     # ── Metadata for sidebar ──────────────────────────────────────
 
@@ -107,8 +65,12 @@ class SearchOperations:
               ...
             }
         """
+        filterable = {
+            f['name'] for f in self.field_definitions
+            if f['type'] in ('text', 'level', 'number')
+        }
         result = {}
-        for fname in self.field_indices:
+        for fname in filterable:
             values = sorted(set(
                 e.fields[fname]
                 for e in self.logs
@@ -121,8 +83,10 @@ class SearchOperations:
     # ── Line operations ───────────────────────────────────────────
 
     def get_line(self, line_number: int) -> Optional[Dict]:
-        entry = self.line_index.get(line_number)
-        return entry.to_dict() if entry else None
+        for entry in self.logs:
+            if entry.actual_line_number == line_number:
+                return entry.to_dict()
+        return None
 
     def get_first_n(self, n: int) -> List[Dict]:
         return [e.to_dict() for e in self.logs[:n]]
@@ -146,7 +110,9 @@ class SearchOperations:
         """
         Single-pass AND filter across all active parameters.
 
-        text          -- substring match on raw_line
+        text          -- comma-separated keywords, ANY must appear in raw_line (OR logic)
+                         e.g. "gps, location" matches lines containing gps OR location (or both)
+                         single keyword works as before
         filters       -- {field_name: [allowed_values]}
                          OR logic within each field, AND logic across fields
                          e.g. {"level": ["ERROR","WARNING"], "component": ["GPS"]}
@@ -157,11 +123,16 @@ class SearchOperations:
         line_end      -- maximum actual_line_number (inclusive)
         uploaded_file -- substring match on entry.source_file (uploaded filename)
         """
-        # Pre-process text search term
-        search_term = (
-            (text if case_sensitive else text.lower())
-            if text else None
-        )
+        # Pre-process text search term(s)
+        # Split by comma → strip whitespace → drop empty strings
+        # e.g. "GPS, ERROR" → ["gps", "error"]  (case-insensitive)
+        search_terms: List[str] = []
+        if text:
+            raw_terms = [t.strip() for t in text.split(',')]
+            search_terms = [
+                (t if case_sensitive else t.lower())
+                for t in raw_terms if t
+            ]
 
         # Build lowercase allowed-value sets for each active field filter
         active: Dict[str, Set[str]] = {}
@@ -176,29 +147,31 @@ class SearchOperations:
 
         for entry in self.logs:
 
-            # ── Text search on full raw line ───────────────────────
-            if search_term:
+            # ── Text search on full raw line (OR logic across keywords) ───
+            # A line matches if it contains ANY of the comma-separated keywords.
+            # e.g. "gps, location" → lines with gps OR location (or both).
+            if search_terms:
                 hay = entry.raw_line if case_sensitive else entry.raw_line.lower()
-                if search_term not in hay:
+                if not any(term in hay for term in search_terms):
                     continue
 
             # ── Timestamp range ────────────────────────────────────
+            # Rules (work for full, partial, or mixed timestamps):
+            #   start_time: exclude entry if ts is strictly before it
+            #               (ts.startswith(start_time) means ts >= start_time always)
+            #   end_time:   exclude entry if ts is strictly after it
+            #               BUT allow ts that begins with end_time —
+            #               e.g. filter="26032025:095355" must match "26032025:095355.384"
             if (start_time or end_time) and self.timestamp_field:
                 ts = entry.fields.get(self.timestamp_field, '')
+                if not ts:
+                    continue
                 if start_time:
-                    if len(start_time) >= 10:
-                        if ts < start_time:
-                            continue
-                    else:
-                        if start_time not in ts:
-                            continue
+                    if ts < start_time and not ts.startswith(start_time):
+                        continue
                 if end_time:
-                    if len(end_time) >= 10:
-                        if ts > end_time:
-                            continue
-                    else:
-                        if end_time not in ts:
-                            continue
+                    if ts > end_time and not ts.startswith(end_time):
+                        continue
 
             # ── Line number range ──────────────────────────────────
             if line_start is not None and entry.actual_line_number < line_start:
