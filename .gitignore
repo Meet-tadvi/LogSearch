@@ -15,9 +15,14 @@ backend/benchmark.py
 backend/data/
 backend/test.py
 backend/test2.py
+backend/main.dist
+backend/main.build
 
 # Frontend
 frontend/dist/
+frontend/dist-python/
+frontend/dist-electron/
+frontend/build
 
 # Scripts
 build_desktop.ps1

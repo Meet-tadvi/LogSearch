@@ -1,8 +1,9 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, globalShortcut } from 'electron';
 import path from 'path';
 import { spawn } from 'child_process';
 import http from 'http';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 // Define __dirname for ES Modules
 const __filename = fileURLToPath(import.meta.url);
@@ -30,12 +31,21 @@ function startPythonBackend() {
     pythonProcess = spawn(pythonExe, [backendPath, PORT.toString()]);
   }
 
+  const logPath = path.join(app.getPath('userData'), 'backend.log');
+  const logStream = fs.createWriteStream(logPath, { flags: 'a' });
+  
+  logStream.write(`\n--- Application Started at ${new Date().toISOString()} ---\n`);
+
   pythonProcess.stdout.on('data', (data) => {
-    console.log(`Backend: ${data}`);
+    const msg = data.toString();
+    console.log(`Backend: ${msg}`);
+    logStream.write(`[OUT] ${msg}`);
   });
 
   pythonProcess.stderr.on('data', (data) => {
-    console.error(`Backend Error: ${data}`);
+    const msg = data.toString();
+    console.error(`Backend Error: ${msg}`);
+    logStream.write(`[ERR] ${msg}`);
   });
 }
 
@@ -61,6 +71,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 768,
     title: "Log Vision",
+    icon: path.join(__dirname, 'build', 'icon.ico'),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true
@@ -77,6 +88,13 @@ function createWindow() {
 
   mainWindow.on('closed', function () {
     mainWindow = null;
+  });
+
+  // Enable Ctrl+Shift+I to open developer tools for debugging the React interface
+  globalShortcut.register('CommandOrControl+Shift+I', () => {
+    if (mainWindow) {
+      mainWindow.webContents.toggleDevTools();
+    }
   });
 }
 

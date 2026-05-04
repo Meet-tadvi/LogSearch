@@ -10,7 +10,8 @@ import io
 import json
 from typing import List, Dict, AsyncGenerator
 
-OLLAMA_MODEL = 'deepseek-v3.1:671b-cloud'
+# OLLAMA_MODEL = 'deepseek-v3.1:671b-cloud'
+OLLAMA_MODEL = 'gpt-oss:120b-cloud'
 # OLLAMA_MODEL = 'llama3.1'
 
 SYSTEM_PROMPT = """You are a log file analysis assistant.

@@ -756,9 +756,18 @@ async def shutdown_server():
 # Static Files (Must be defined AFTER all API routes)
 # ================================================================
 
-_frontend_dist = BASE_PATH / 'frontend' / 'dist'
+_exe_dir = Path(sys.executable).parent
+if _exe_dir.name == 'backend':
+    # Packaged in Electron: resources/backend/main.exe
+    _frontend_dist = _exe_dir.parent / 'frontend' / 'dist'
+else:
+    # Development: backend/main.py
+    _frontend_dist = BASE_PATH / 'frontend' / 'dist'
+
 if _frontend_dist.exists():
     app.mount('/', StaticFiles(directory=str(_frontend_dist), html=True), name='frontend')
+else:
+    print(f"Warning: Frontend dist not found at {_frontend_dist}")
 
 if __name__ == '__main__':
     import multiprocessing

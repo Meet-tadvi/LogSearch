@@ -31,16 +31,27 @@
     "files": [
       "dist/**/*",
       "electron-main.js",
-      "package.json"
+      "package.json",
+      "build/icon.ico"
     ],
     "extraResources": [
       {
         "from": "dist-python/backend",
         "to": "backend"
+      },
+      {
+        "from": "dist",
+        "to": "frontend/dist"
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
     }
   }
 }
