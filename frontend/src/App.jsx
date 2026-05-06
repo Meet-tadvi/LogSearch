@@ -298,6 +298,7 @@ export default function App() {
             <ResultsTab
               results          = {results}
               loading          = {loading}
+              searchQuery      = {applied.text}
               fieldDefinitions = {fieldDefinitions}
               isMultiFile      = {isMultiFile}
               page             = {page}

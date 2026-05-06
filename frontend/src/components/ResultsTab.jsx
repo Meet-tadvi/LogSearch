@@ -32,6 +32,7 @@ function getLevelColor(val) {
 
 export default function ResultsTab({
   results, loading,
+  searchQuery,
   fieldDefinitions,
   isMultiFile,
   page, pageSize,
@@ -84,6 +85,37 @@ export default function ResultsTab({
 
   const { distributions = {}, time_range = {}, line_range = {} } = summary
 
+  function highlightText(text, query) {
+    if (!query || !text) return text
+    
+    // Split query by commas, trim, and filter out empties to match backend logic
+    const terms = query.split(',').map(t => t.trim()).filter(Boolean)
+    if (terms.length === 0) return text
+
+    const escapedTerms = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    const regex = new RegExp(`(${escapedTerms.join('|')})`, 'gi')
+    const parts = text.split(regex)
+
+    const isMatch = (part) => {
+      const lowerPart = part.toLowerCase()
+      return terms.some(t => t.toLowerCase() === lowerPart)
+    }
+
+    return (
+      <>
+        {parts.map((part, i) =>
+          isMatch(part) ? (
+            <mark key={i} style={{ backgroundColor: 'rgba(220, 163, 41, 0.4)', color: '#fff', borderRadius: '2px', padding: '0 2px' }}>
+              {part}
+            </mark>
+          ) : (
+            part
+          )
+        )}
+      </>
+    )
+  }
+
   function renderCell(col, m) {
     if (col.special === 'line')   return m.actual_line_number
     if (col.special === 'source') return m.source_file || ''
@@ -104,13 +136,13 @@ export default function ResultsTab({
               padding: '2px 8px',
             }}
           >
-            {val}
+            {highlightText(String(val), searchQuery)}
           </span>
         )
       }
     }
 
-    return String(val)
+    return highlightText(String(val), searchQuery)
   }
 
   return (
