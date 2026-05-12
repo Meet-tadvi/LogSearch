@@ -219,9 +219,14 @@ export async function getContextInfo(fileIds) {
   return get(`/api/llm/context-info${qs}`)
 }
 
-/** First 50 rows of the exact CSV that would be sent to Ollama. */
+/** First 50 rows of the exact CSV that would be sent to Ollama + real token estimate. */
 export async function getCsvPreview(params) {
   return post('/api/llm/csv-preview', params)
+}
+
+/** Fetch available Ollama models from the local Ollama daemon. */
+export async function getModels() {
+  return get('/api/llm/models')
 }
 
 /**
@@ -233,6 +238,8 @@ export async function getCsvPreview(params) {
  *     file_ids: string[] | null,
  *     filters:  SearchRequest | null,
  *     history:  [{role, content}] | null,
+ *     model:    string | null,   // Ollama model name, e.g. 'llama3.1'
+ *     num_ctx:  number | null,   // context window tokens
  *   }
  *
  * Callbacks:
