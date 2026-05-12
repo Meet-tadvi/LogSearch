@@ -10,9 +10,9 @@ import io
 import json
 from typing import List, Dict, AsyncGenerator
 
-# OLLAMA_MODEL = 'deepseek-v3.1:671b-cloud'
-OLLAMA_MODEL = 'gpt-oss:120b-cloud'
-# OLLAMA_MODEL = 'llama3.1'
+# Default model — overridable at runtime via API request
+DEFAULT_MODEL   = 'gpt-oss:120b-cloud'
+DEFAULT_NUM_CTX = 160000
 
 SYSTEM_PROMPT = """You are a log file analysis assistant.
 You have been given COMPLETE log data as a CSV table — every filtered row is present.
@@ -131,6 +131,8 @@ async def stream_ollama_response(
     csv_data:      str,
     match_summary: Dict,
     history:       List[Dict],
+    model:         str  = None,
+    num_ctx:       int  = None,
 ) -> AsyncGenerator[str, None]:
     """
     Async generator that yields Server-Sent Event strings.
@@ -150,18 +152,19 @@ async def stream_ollama_response(
 
     messages = build_messages(question, csv_data, match_summary, history)
 
+    active_model   = model   or DEFAULT_MODEL
+    active_num_ctx = num_ctx or DEFAULT_NUM_CTX
+
     try:
         stream = ollama.chat(
-            model    = OLLAMA_MODEL,
+            model    = active_model,
             messages = messages,
             stream   = True,
             options  = {
                 'temperature': 0.1,
-                # 'num_ctx': 32768,    # 8K — safe for llama3.1 8B on 6GB VRAM
-                                       # (model ~4.7GB + KV cache ~1GB = ~5.7GB total)
-                'num_ctx':  160000,     # Use narrow filters to keep CSV under ~6K tokens
-                'num_gpu':     99,     # offload ALL layers to GPU
-                'num_thread':   8,
+                'num_ctx':     active_num_ctx,
+                'num_gpu':     99,   # offload ALL layers to GPU
+                'num_thread':  8,
             }
         )
         for chunk in stream:
@@ -174,7 +177,7 @@ async def stream_ollama_response(
         yield _sse({'type': 'error', 'content': (
             f"Ollama error: {e}\n"
             f"* Make sure Ollama is running: ollama serve\n"
-            f"* Pull the model: ollama pull {OLLAMA_MODEL}\n"
+            f"* Pull the model: ollama pull {active_model}\n"
             f"* Context too large? Narrow your filters."
         )})
 
@@ -238,7 +241,7 @@ Now analyse these sample lines and return the JSON format definition:
 """
 
 
-async def ask_ollama_for_format(sample_lines: List[str]) -> Dict:
+async def ask_ollama_for_format(sample_lines: List[str], model: str = None) -> Dict:
     """
     Send sample log lines to Ollama and get back a complete
     format definition dict ready to pre-fill the add-format form.
@@ -261,9 +264,11 @@ async def ask_ollama_for_format(sample_lines: List[str]) -> Dict:
         {'role': 'user',   'content': lines_text},
     ]
 
+    active_model = model or DEFAULT_MODEL
+
     try:
         response = ollama.chat(
-            model    = OLLAMA_MODEL,
+            model    = active_model,
             messages = messages,
             stream   = False,
             options  = {

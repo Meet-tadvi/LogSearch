@@ -47,6 +47,8 @@ from llm import (
     estimate_tokens,
     stream_ollama_response,
     ask_ollama_for_format,
+    DEFAULT_MODEL,
+    DEFAULT_NUM_CTX,
 )
 from log_parser import LogParser, get_raw_formats, save_formats
 from search_operations import SearchOperations
@@ -215,6 +217,8 @@ class LLMRequest(BaseModel):
     file_ids: Optional[List[str]]     = None
     filters:  Optional[SearchRequest] = None
     history:  Optional[List[dict]]    = None
+    model:    Optional[str]           = None   # e.g. 'llama3.1', 'gpt-oss:120b-cloud'
+    num_ctx:  Optional[int]           = None   # context window size in tokens
 
 
 class CsvPreviewRequest(BaseModel):
@@ -559,7 +563,11 @@ async def llm_chat(req: LLMRequest, request: Request, session = Depends(get_sess
 
     async def _stream_with_disconnect_check():
         """Stop yielding the moment the client disconnects (Stop button)."""
-        async for chunk in stream_ollama_response(req.question, csv_data, summary, history):
+        async for chunk in stream_ollama_response(
+            req.question, csv_data, summary, history,
+            model   = req.model,
+            num_ctx = req.num_ctx,
+        ):
             if await request.is_disconnected():
                 break          # client gone — stop sending, no socket errors
             yield chunk
@@ -577,17 +585,35 @@ async def llm_chat(req: LLMRequest, request: Request, session = Depends(get_sess
 @app.post('/api/llm/csv-preview')
 async def llm_csv_preview(req: CsvPreviewRequest, session = Depends(get_session)):
     """
-    Return the first 50 rows of the exact CSV that would be sent to Ollama.
+    Return the first 50 rows of the exact CSV that would be sent to Ollama,
+    plus a real token estimate derived from the actual CSV character count.
     Powers the 'Preview data' button in the LLM panel.
     """
     filters_req = req.filters or SearchRequest()
     ids         = req.file_ids or None
     ops         = store.get_combined_ops(session, ids)
     if not ops:
-        return {'csv': '', 'total': 0}
+        return {'csv': '', 'total': 0, 'est_tokens': 0, 'est_size_kb': 0}
     all_matches = _apply_filters(ops, filters_req)
-    preview     = build_csv_from_matches(all_matches[:50], ops.field_definitions)
-    return {'csv': preview, 'total': len(all_matches)}
+    total       = len(all_matches)
+
+    # Build preview CSV (first 50 rows) for display
+    preview = build_csv_from_matches(all_matches[:50], ops.field_definitions)
+
+    # Accurate token estimate: sample up to 200 rows, measure bytes/row, scale to total
+    sample_csv      = build_csv_from_matches(all_matches[:200], ops.field_definitions)
+    sample_rows     = max(1, min(200, total))
+    chars_per_row   = (len(sample_csv) / sample_rows) if sample_rows else 80
+    est_total_chars = chars_per_row * total
+    est_tokens      = int(est_total_chars // 4)
+    est_size_kb     = round(est_total_chars / 1024, 1)
+
+    return {
+        'csv':        preview,
+        'total':      total,
+        'est_tokens': est_tokens,
+        'est_size_kb': est_size_kb,
+    }
 
 
 @app.get('/api/llm/context-info')
@@ -595,7 +621,7 @@ async def llm_context_info(
     file_ids: Optional[str] = None,
     session = Depends(get_session),
 ):
-    """Token estimate without building the full CSV."""
+    """Rough token estimate without building the full CSV (quick, used on file selection)."""
     ids   = file_ids.split(',') if file_ids else None
     ops   = store.get_combined_ops(session, ids)
     total = len(ops.logs) if ops else 0
@@ -604,6 +630,38 @@ async def llm_context_info(
         'est_tokens':    (total * 80) // 4,
         'est_size_kb':   round(total * 80 / 1024, 1),
     }
+
+
+@app.get('/api/llm/models')
+async def llm_models():
+    """
+    Return the list of locally available Ollama models.
+    Calls Ollama's /api/tags endpoint. Falls back gracefully if Ollama is offline.
+    """
+    import urllib.request, urllib.error
+    try:
+        with urllib.request.urlopen('http://127.0.0.1:11434/api/tags', timeout=3) as resp:
+            data   = json.loads(resp.read())
+            models = [
+                {
+                    'name':    m.get('name', ''),
+                    'size_gb': round(m.get('size', 0) / 1024 ** 3, 1),
+                }
+                for m in data.get('models', [])
+            ]
+            return {
+                'models':        models,
+                'default_model': DEFAULT_MODEL,
+                'default_ctx':   DEFAULT_NUM_CTX,
+            }
+    except Exception as e:
+        # Ollama offline or not installed — return empty list + defaults
+        return {
+            'models':        [],
+            'default_model': DEFAULT_MODEL,
+            'default_ctx':   DEFAULT_NUM_CTX,
+            'warning':       f'Could not reach Ollama: {e}',
+        }
 
 
 # ================================================================
